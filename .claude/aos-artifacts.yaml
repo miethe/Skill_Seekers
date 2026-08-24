@@ -1,0 +1,8 @@
+schema_version: 1
+project: "Skill_Seekers"
+
+policy:
+  mode: auto
+
+artifacts:
+  - { name: "skill_seekers", type: skill, lifecycle: permanent, status: active, source: project-local, tuned: true, scope: null, version: null, note: "local .claude skills artifact" }
