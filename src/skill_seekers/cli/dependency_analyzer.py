@@ -3,7 +3,7 @@
 Dependency Graph Analyzer (C2.6)
 
 Analyzes import/require/include/use statements to build dependency graphs.
-Supports 9 programming languages with language-specific extraction.
+Supports 10 programming languages + Godot ecosystem with language-specific extraction.
 
 Features:
 - Multi-language import extraction (Python AST, others regex-based)
@@ -14,6 +14,8 @@ Features:
 
 Supported Languages:
 - Python: import, from...import, relative imports (AST-based)
+- GDScript: preload(), load(), extends (regex-based, Godot game engine)
+- Godot Files: .tscn, .tres, .gdshader ext_resource parsing
 - JavaScript/TypeScript: ES6 import, CommonJS require (regex-based)
 - C/C++: #include directives (regex-based)
 - C#: using statements (regex, based on MS C# spec)
@@ -37,15 +39,16 @@ Credits:
 - NetworkX for graph algorithms: https://networkx.org/
 """
 
-import re
 import ast
 import logging
-from pathlib import Path
-from typing import Dict, List, Set, Tuple, Optional, Any
+import re
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
 try:
     import networkx as nx
+
     NETWORKX_AVAILABLE = True
 except ImportError:
     NETWORKX_AVAILABLE = False
@@ -56,6 +59,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class DependencyInfo:
     """Information about a single dependency relationship."""
+
     source_file: str
     imported_module: str
     import_type: str  # 'import', 'from', 'require', 'include'
@@ -66,10 +70,11 @@ class DependencyInfo:
 @dataclass
 class FileNode:
     """Represents a file node in the dependency graph."""
+
     file_path: str
     language: str
-    dependencies: List[str] = field(default_factory=list)
-    imported_by: List[str] = field(default_factory=list)
+    dependencies: list[str] = field(default_factory=list)
+    imported_by: list[str] = field(default_factory=list)
 
 
 class DependencyAnalyzer:
@@ -84,43 +89,49 @@ class DependencyAnalyzer:
         """Initialize dependency analyzer."""
         if not NETWORKX_AVAILABLE:
             raise ImportError(
-                "NetworkX is required for dependency analysis. "
-                "Install with: pip install networkx"
+                "NetworkX is required for dependency analysis. Install with: pip install networkx"
             )
 
         self.graph = nx.DiGraph()  # Directed graph for dependencies
-        self.file_dependencies: Dict[str, List[DependencyInfo]] = {}
-        self.file_nodes: Dict[str, FileNode] = {}
+        self.file_dependencies: dict[str, list[DependencyInfo]] = {}
+        self.file_nodes: dict[str, FileNode] = {}
 
-    def analyze_file(self, file_path: str, content: str, language: str) -> List[DependencyInfo]:
+    def analyze_file(self, file_path: str, content: str, language: str) -> list[DependencyInfo]:
         """
         Extract dependencies from a source file.
 
         Args:
             file_path: Path to source file
             content: File content
-            language: Programming language (Python, JavaScript, TypeScript, C, C++, C#, Go, Rust, Java, Ruby, PHP)
+            language: Programming language (Python, GDScript, GodotScene, GodotResource, GodotShader,
+                     JavaScript, TypeScript, C, C++, C#, Go, Rust, Java, Ruby, PHP)
 
         Returns:
             List of DependencyInfo objects
         """
-        if language == 'Python':
+        if language == "Python":
             deps = self._extract_python_imports(content, file_path)
-        elif language in ('JavaScript', 'TypeScript'):
+        elif language == "GDScript":
+            # GDScript uses preload/load, not Python imports
+            deps = self._extract_gdscript_imports(content, file_path)
+        elif language in ("GodotScene", "GodotResource", "GodotShader"):
+            # Godot resource files use ext_resource references
+            deps = self._extract_godot_resources(content, file_path)
+        elif language in ("JavaScript", "TypeScript"):
             deps = self._extract_js_imports(content, file_path)
-        elif language in ('C++', 'C'):
+        elif language in ("C++", "C"):
             deps = self._extract_cpp_includes(content, file_path)
-        elif language == 'C#':
+        elif language == "C#":
             deps = self._extract_csharp_imports(content, file_path)
-        elif language == 'Go':
+        elif language == "Go":
             deps = self._extract_go_imports(content, file_path)
-        elif language == 'Rust':
+        elif language == "Rust":
             deps = self._extract_rust_imports(content, file_path)
-        elif language == 'Java':
+        elif language == "Java":
             deps = self._extract_java_imports(content, file_path)
-        elif language == 'Ruby':
+        elif language == "Ruby":
             deps = self._extract_ruby_imports(content, file_path)
-        elif language == 'PHP':
+        elif language == "PHP":
             deps = self._extract_php_imports(content, file_path)
         else:
             logger.warning(f"Unsupported language: {language}")
@@ -131,14 +142,12 @@ class DependencyAnalyzer:
         # Create file node
         imported_modules = [dep.imported_module for dep in deps]
         self.file_nodes[file_path] = FileNode(
-            file_path=file_path,
-            language=language,
-            dependencies=imported_modules
+            file_path=file_path, language=language, dependencies=imported_modules
         )
 
         return deps
 
-    def _extract_python_imports(self, content: str, file_path: str) -> List[DependencyInfo]:
+    def _extract_python_imports(self, content: str, file_path: str) -> list[DependencyInfo]:
         """
         Extract Python import statements using AST.
 
@@ -159,33 +168,156 @@ class DependencyAnalyzer:
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    deps.append(DependencyInfo(
-                        source_file=file_path,
-                        imported_module=alias.name,
-                        import_type='import',
-                        is_relative=False,
-                        line_number=node.lineno
-                    ))
+                    deps.append(
+                        DependencyInfo(
+                            source_file=file_path,
+                            imported_module=alias.name,
+                            import_type="import",
+                            is_relative=False,
+                            line_number=node.lineno,
+                        )
+                    )
 
             elif isinstance(node, ast.ImportFrom):
-                module = node.module or ''
+                module = node.module or ""
                 is_relative = node.level > 0
 
                 # Handle relative imports
                 if is_relative:
-                    module = '.' * node.level + module
+                    module = "." * node.level + module
 
-                deps.append(DependencyInfo(
-                    source_file=file_path,
-                    imported_module=module,
-                    import_type='from',
-                    is_relative=is_relative,
-                    line_number=node.lineno
-                ))
+                deps.append(
+                    DependencyInfo(
+                        source_file=file_path,
+                        imported_module=module,
+                        import_type="from",
+                        is_relative=is_relative,
+                        line_number=node.lineno,
+                    )
+                )
 
         return deps
 
-    def _extract_js_imports(self, content: str, file_path: str) -> List[DependencyInfo]:
+    def _extract_gdscript_imports(self, content: str, file_path: str) -> list[DependencyInfo]:
+        """
+        Extract GDScript import/preload/load statements.
+
+        Handles:
+        - const MyClass = preload("res://path/to/file.gd")
+        - var scene = load("res://path/to/scene.tscn")
+        - extends "res://path/to/base.gd"
+        - extends MyBaseClass (implicit dependency)
+
+        Note: GDScript uses res:// paths which are converted to relative paths.
+        """
+        deps = []
+
+        # Extract preload() calls: const/var NAME = preload("path")
+        preload_pattern = r'(?:const|var)\s+\w+\s*=\s*preload\("(.+?)"\)'
+        for match in re.finditer(preload_pattern, content):
+            resource_path = match.group(1)
+            line_num = content[: match.start()].count("\n") + 1
+
+            # Convert res:// paths to relative
+            if resource_path.startswith("res://"):
+                resource_path = resource_path[6:]
+
+            deps.append(
+                DependencyInfo(
+                    source_file=file_path,
+                    imported_module=resource_path,
+                    import_type="preload",
+                    is_relative=True,
+                    line_number=line_num,
+                )
+            )
+
+        # Extract load() calls: var/const NAME = load("path")
+        load_pattern = r'(?:const|var)\s+\w+\s*=\s*load\("(.+?)"\)'
+        for match in re.finditer(load_pattern, content):
+            resource_path = match.group(1)
+            line_num = content[: match.start()].count("\n") + 1
+
+            if resource_path.startswith("res://"):
+                resource_path = resource_path[6:]
+
+            deps.append(
+                DependencyInfo(
+                    source_file=file_path,
+                    imported_module=resource_path,
+                    import_type="load",
+                    is_relative=True,
+                    line_number=line_num,
+                )
+            )
+
+        # Extract extends with string path: extends "res://path/to/base.gd"
+        extends_path_pattern = r'extends\s+"(.+?)"'
+        for match in re.finditer(extends_path_pattern, content):
+            resource_path = match.group(1)
+            line_num = content[: match.start()].count("\n") + 1
+
+            if resource_path.startswith("res://"):
+                resource_path = resource_path[6:]
+
+            deps.append(
+                DependencyInfo(
+                    source_file=file_path,
+                    imported_module=resource_path,
+                    import_type="extends",
+                    is_relative=True,
+                    line_number=line_num,
+                )
+            )
+
+        # Extract extends with class name: extends MyBaseClass
+        # Note: This creates a symbolic dependency that may not resolve to a file
+        extends_class_pattern = r"extends\s+([A-Z]\w+)"
+        for match in re.finditer(extends_class_pattern, content):
+            class_name = match.group(1)
+            line_num = content[: match.start()].count("\n") + 1
+
+            # Skip built-in Godot classes (Node, Resource, etc.)
+            if class_name not in (
+                "Node",
+                "Node2D",
+                "Node3D",
+                "Resource",
+                "RefCounted",
+                "Object",
+                "Control",
+                "Area2D",
+                "Area3D",
+                "CharacterBody2D",
+                "CharacterBody3D",
+                "RigidBody2D",
+                "RigidBody3D",
+                "StaticBody2D",
+                "StaticBody3D",
+                "Camera2D",
+                "Camera3D",
+                "Sprite2D",
+                "Sprite3D",
+                "Label",
+                "Button",
+                "Panel",
+                "Container",
+                "VBoxContainer",
+                "HBoxContainer",
+            ):
+                deps.append(
+                    DependencyInfo(
+                        source_file=file_path,
+                        imported_module=class_name,
+                        import_type="extends",
+                        is_relative=False,
+                        line_number=line_num,
+                    )
+                )
+
+        return deps
+
+    def _extract_js_imports(self, content: str, file_path: str) -> list[DependencyInfo]:
         """
         Extract JavaScript/TypeScript import statements.
 
@@ -202,35 +334,39 @@ class DependencyAnalyzer:
         import_pattern = r"import\s+(?:[\w\s{},*]+\s+from\s+)?['\"]([^'\"]+)['\"]"
         for match in re.finditer(import_pattern, content):
             module = match.group(1)
-            line_num = content[:match.start()].count('\n') + 1
-            is_relative = module.startswith('.') or module.startswith('/')
+            line_num = content[: match.start()].count("\n") + 1
+            is_relative = module.startswith(".") or module.startswith("/")
 
-            deps.append(DependencyInfo(
-                source_file=file_path,
-                imported_module=module,
-                import_type='import',
-                is_relative=is_relative,
-                line_number=line_num
-            ))
+            deps.append(
+                DependencyInfo(
+                    source_file=file_path,
+                    imported_module=module,
+                    import_type="import",
+                    is_relative=is_relative,
+                    line_number=line_num,
+                )
+            )
 
         # CommonJS requires: require('module')
         require_pattern = r"require\s*\(['\"]([^'\"]+)['\"]\)"
         for match in re.finditer(require_pattern, content):
             module = match.group(1)
-            line_num = content[:match.start()].count('\n') + 1
-            is_relative = module.startswith('.') or module.startswith('/')
+            line_num = content[: match.start()].count("\n") + 1
+            is_relative = module.startswith(".") or module.startswith("/")
 
-            deps.append(DependencyInfo(
-                source_file=file_path,
-                imported_module=module,
-                import_type='require',
-                is_relative=is_relative,
-                line_number=line_num
-            ))
+            deps.append(
+                DependencyInfo(
+                    source_file=file_path,
+                    imported_module=module,
+                    import_type="require",
+                    is_relative=is_relative,
+                    line_number=line_num,
+                )
+            )
 
         return deps
 
-    def _extract_cpp_includes(self, content: str, file_path: str) -> List[DependencyInfo]:
+    def _extract_cpp_includes(self, content: str, file_path: str) -> list[DependencyInfo]:
         """
         Extract C++ #include directives.
 
@@ -244,22 +380,24 @@ class DependencyAnalyzer:
         include_pattern = r'#include\s+[<"]([^>"]+)[>"]'
         for match in re.finditer(include_pattern, content):
             header = match.group(1)
-            line_num = content[:match.start()].count('\n') + 1
+            line_num = content[: match.start()].count("\n") + 1
 
             # Headers with "" are usually local, <> are system headers
             is_relative = '"' in match.group(0)
 
-            deps.append(DependencyInfo(
-                source_file=file_path,
-                imported_module=header,
-                import_type='include',
-                is_relative=is_relative,
-                line_number=line_num
-            ))
+            deps.append(
+                DependencyInfo(
+                    source_file=file_path,
+                    imported_module=header,
+                    import_type="include",
+                    is_relative=is_relative,
+                    line_number=line_num,
+                )
+            )
 
         return deps
 
-    def _extract_csharp_imports(self, content: str, file_path: str) -> List[DependencyInfo]:
+    def _extract_csharp_imports(self, content: str, file_path: str) -> list[DependencyInfo]:
         """
         Extract C# using statements.
 
@@ -275,27 +413,29 @@ class DependencyAnalyzer:
         deps = []
 
         # Match using statements: using [static] Namespace[.Type];
-        using_pattern = r'using\s+(?:static\s+)?(?:(\w+)\s*=\s*)?([A-Za-z_][\w.]*)\s*;'
+        using_pattern = r"using\s+(?:static\s+)?(?:(\w+)\s*=\s*)?([A-Za-z_][\w.]*)\s*;"
         for match in re.finditer(using_pattern, content):
             alias = match.group(1)  # Optional alias
             namespace = match.group(2)
-            line_num = content[:match.start()].count('\n') + 1
+            line_num = content[: match.start()].count("\n") + 1
 
             # Skip 'using' statements for IDisposable (using var x = ...)
-            if '=' in match.group(0) and not alias:
+            if "=" in match.group(0) and not alias:
                 continue
 
-            deps.append(DependencyInfo(
-                source_file=file_path,
-                imported_module=namespace,
-                import_type='using',
-                is_relative=False,  # C# uses absolute namespaces
-                line_number=line_num
-            ))
+            deps.append(
+                DependencyInfo(
+                    source_file=file_path,
+                    imported_module=namespace,
+                    import_type="using",
+                    is_relative=False,  # C# uses absolute namespaces
+                    line_number=line_num,
+                )
+            )
 
         return deps
 
-    def _extract_go_imports(self, content: str, file_path: str) -> List[DependencyInfo]:
+    def _extract_go_imports(self, content: str, file_path: str) -> list[DependencyInfo]:
         """
         Extract Go import statements.
 
@@ -312,23 +452,25 @@ class DependencyAnalyzer:
         # Single import: import [alias] "package"
         single_import_pattern = r'import\s+(?:(\w+)\s+)?"([^"]+)"'
         for match in re.finditer(single_import_pattern, content):
-            alias = match.group(1)  # Optional alias
+            match.group(1)  # Optional alias
             package = match.group(2)
-            line_num = content[:match.start()].count('\n') + 1
+            line_num = content[: match.start()].count("\n") + 1
 
             # Check if relative (starts with ./ or ../)
-            is_relative = package.startswith('./')
+            is_relative = package.startswith("./")
 
-            deps.append(DependencyInfo(
-                source_file=file_path,
-                imported_module=package,
-                import_type='import',
-                is_relative=is_relative,
-                line_number=line_num
-            ))
+            deps.append(
+                DependencyInfo(
+                    source_file=file_path,
+                    imported_module=package,
+                    import_type="import",
+                    is_relative=is_relative,
+                    line_number=line_num,
+                )
+            )
 
         # Multi-import block: import ( ... )
-        multi_import_pattern = r'import\s*\((.*?)\)'
+        multi_import_pattern = r"import\s*\((.*?)\)"
         for match in re.finditer(multi_import_pattern, content, re.DOTALL):
             block = match.group(1)
             block_start = match.start()
@@ -336,23 +478,25 @@ class DependencyAnalyzer:
             # Extract individual imports from block
             import_line_pattern = r'(?:(\w+)\s+)?"([^"]+)"'
             for line_match in re.finditer(import_line_pattern, block):
-                alias = line_match.group(1)
+                _alias = line_match.group(1)
                 package = line_match.group(2)
-                line_num = content[:block_start + line_match.start()].count('\n') + 1
+                line_num = content[: block_start + line_match.start()].count("\n") + 1
 
-                is_relative = package.startswith('./')
+                is_relative = package.startswith("./")
 
-                deps.append(DependencyInfo(
-                    source_file=file_path,
-                    imported_module=package,
-                    import_type='import',
-                    is_relative=is_relative,
-                    line_number=line_num
-                ))
+                deps.append(
+                    DependencyInfo(
+                        source_file=file_path,
+                        imported_module=package,
+                        import_type="import",
+                        is_relative=is_relative,
+                        line_number=line_num,
+                    )
+                )
 
         return deps
 
-    def _extract_rust_imports(self, content: str, file_path: str) -> List[DependencyInfo]:
+    def _extract_rust_imports(self, content: str, file_path: str) -> list[DependencyInfo]:
         """
         Extract Rust use statements.
 
@@ -369,43 +513,47 @@ class DependencyAnalyzer:
 
         # Match use statements: use path::to::item; (including curly braces with spaces)
         # This pattern matches: use word::word; or use word::{item, item};
-        use_pattern = r'use\s+([\w:{}]+(?:\s*,\s*[\w:{}]+)*|[\w:]+::\{[^}]+\})\s*;'
+        use_pattern = r"use\s+([\w:{}]+(?:\s*,\s*[\w:{}]+)*|[\w:]+::\{[^}]+\})\s*;"
         for match in re.finditer(use_pattern, content):
             module_path = match.group(1)
-            line_num = content[:match.start()].count('\n') + 1
+            line_num = content[: match.start()].count("\n") + 1
 
             # Determine if relative
-            is_relative = module_path.startswith(('self::', 'super::'))
+            is_relative = module_path.startswith(("self::", "super::"))
 
             # Handle curly brace imports (use std::{io, fs})
-            if '{' in module_path:
+            if "{" in module_path:
                 # Extract base path
-                base_path = module_path.split('{')[0].rstrip(':')
+                base_path = module_path.split("{")[0].rstrip(":")
                 # Extract items inside braces
-                items_match = re.search(r'\{([^}]+)\}', module_path)
+                items_match = re.search(r"\{([^}]+)\}", module_path)
                 if items_match:
-                    items = [item.strip() for item in items_match.group(1).split(',')]
+                    items = [item.strip() for item in items_match.group(1).split(",")]
                     for item in items:
                         full_path = f"{base_path}::{item}" if base_path else item
-                        deps.append(DependencyInfo(
-                            source_file=file_path,
-                            imported_module=full_path,
-                            import_type='use',
-                            is_relative=is_relative,
-                            line_number=line_num
-                        ))
+                        deps.append(
+                            DependencyInfo(
+                                source_file=file_path,
+                                imported_module=full_path,
+                                import_type="use",
+                                is_relative=is_relative,
+                                line_number=line_num,
+                            )
+                        )
             else:
-                deps.append(DependencyInfo(
-                    source_file=file_path,
-                    imported_module=module_path,
-                    import_type='use',
-                    is_relative=is_relative,
-                    line_number=line_num
-                ))
+                deps.append(
+                    DependencyInfo(
+                        source_file=file_path,
+                        imported_module=module_path,
+                        import_type="use",
+                        is_relative=is_relative,
+                        line_number=line_num,
+                    )
+                )
 
         return deps
 
-    def _extract_java_imports(self, content: str, file_path: str) -> List[DependencyInfo]:
+    def _extract_java_imports(self, content: str, file_path: str) -> list[DependencyInfo]:
         """
         Extract Java import statements.
 
@@ -420,22 +568,24 @@ class DependencyAnalyzer:
         deps = []
 
         # Match import statements: import [static] package.Class;
-        import_pattern = r'import\s+(?:static\s+)?([A-Za-z_][\w.]*(?:\.\*)?)\s*;'
+        import_pattern = r"import\s+(?:static\s+)?([A-Za-z_][\w.]*(?:\.\*)?)\s*;"
         for match in re.finditer(import_pattern, content):
             import_path = match.group(1)
-            line_num = content[:match.start()].count('\n') + 1
+            line_num = content[: match.start()].count("\n") + 1
 
-            deps.append(DependencyInfo(
-                source_file=file_path,
-                imported_module=import_path,
-                import_type='import',
-                is_relative=False,  # Java uses absolute package names
-                line_number=line_num
-            ))
+            deps.append(
+                DependencyInfo(
+                    source_file=file_path,
+                    imported_module=import_path,
+                    import_type="import",
+                    is_relative=False,  # Java uses absolute package names
+                    line_number=line_num,
+                )
+            )
 
         return deps
 
-    def _extract_ruby_imports(self, content: str, file_path: str) -> List[DependencyInfo]:
+    def _extract_ruby_imports(self, content: str, file_path: str) -> list[DependencyInfo]:
         """
         Extract Ruby require/require_relative/load statements.
 
@@ -453,47 +603,53 @@ class DependencyAnalyzer:
         require_pattern = r"require\s+['\"]([^'\"]+)['\"]"
         for match in re.finditer(require_pattern, content):
             module = match.group(1)
-            line_num = content[:match.start()].count('\n') + 1
+            line_num = content[: match.start()].count("\n") + 1
 
-            deps.append(DependencyInfo(
-                source_file=file_path,
-                imported_module=module,
-                import_type='require',
-                is_relative=False,  # require looks in load path
-                line_number=line_num
-            ))
+            deps.append(
+                DependencyInfo(
+                    source_file=file_path,
+                    imported_module=module,
+                    import_type="require",
+                    is_relative=False,  # require looks in load path
+                    line_number=line_num,
+                )
+            )
 
         # Match require_relative: require_relative 'file'
         require_relative_pattern = r"require_relative\s+['\"]([^'\"]+)['\"]"
         for match in re.finditer(require_relative_pattern, content):
             module = match.group(1)
-            line_num = content[:match.start()].count('\n') + 1
+            line_num = content[: match.start()].count("\n") + 1
 
-            deps.append(DependencyInfo(
-                source_file=file_path,
-                imported_module=module,
-                import_type='require_relative',
-                is_relative=True,
-                line_number=line_num
-            ))
+            deps.append(
+                DependencyInfo(
+                    source_file=file_path,
+                    imported_module=module,
+                    import_type="require_relative",
+                    is_relative=True,
+                    line_number=line_num,
+                )
+            )
 
         # Match load: load 'script.rb'
         load_pattern = r"load\s+['\"]([^'\"]+)['\"]"
         for match in re.finditer(load_pattern, content):
             module = match.group(1)
-            line_num = content[:match.start()].count('\n') + 1
+            line_num = content[: match.start()].count("\n") + 1
 
-            deps.append(DependencyInfo(
-                source_file=file_path,
-                imported_module=module,
-                import_type='load',
-                is_relative=True,  # load is usually relative
-                line_number=line_num
-            ))
+            deps.append(
+                DependencyInfo(
+                    source_file=file_path,
+                    imported_module=module,
+                    import_type="load",
+                    is_relative=True,  # load is usually relative
+                    line_number=line_num,
+                )
+            )
 
         return deps
 
-    def _extract_php_imports(self, content: str, file_path: str) -> List[DependencyInfo]:
+    def _extract_php_imports(self, content: str, file_path: str) -> list[DependencyInfo]:
         """
         Extract PHP require/include/use statements.
 
@@ -513,35 +669,39 @@ class DependencyAnalyzer:
         require_pattern = r"(?:require|include)(?:_once)?\s+['\"]([^'\"]+)['\"]"
         for match in re.finditer(require_pattern, content):
             module = match.group(1)
-            line_num = content[:match.start()].count('\n') + 1
+            line_num = content[: match.start()].count("\n") + 1
 
             # Determine import type
-            import_type = 'require' if 'require' in match.group(0) else 'include'
+            import_type = "require" if "require" in match.group(0) else "include"
 
             # PHP file paths are relative by default
-            is_relative = not module.startswith(('/', 'http://', 'https://'))
+            is_relative = not module.startswith(("/", "http://", "https://"))
 
-            deps.append(DependencyInfo(
-                source_file=file_path,
-                imported_module=module,
-                import_type=import_type,
-                is_relative=is_relative,
-                line_number=line_num
-            ))
+            deps.append(
+                DependencyInfo(
+                    source_file=file_path,
+                    imported_module=module,
+                    import_type=import_type,
+                    is_relative=is_relative,
+                    line_number=line_num,
+                )
+            )
 
         # Match namespace use: use Namespace\Class;
-        use_pattern = r'use\s+([A-Za-z_][\w\\]*)\s*(?:as\s+\w+)?\s*;'
+        use_pattern = r"use\s+([A-Za-z_][\w\\]*)\s*(?:as\s+\w+)?\s*;"
         for match in re.finditer(use_pattern, content):
             namespace = match.group(1)
-            line_num = content[:match.start()].count('\n') + 1
+            line_num = content[: match.start()].count("\n") + 1
 
-            deps.append(DependencyInfo(
-                source_file=file_path,
-                imported_module=namespace,
-                import_type='use',
-                is_relative=False,  # Namespaces are absolute
-                line_number=line_num
-            ))
+            deps.append(
+                DependencyInfo(
+                    source_file=file_path,
+                    imported_module=namespace,
+                    import_type="use",
+                    is_relative=False,  # Namespaces are absolute
+                    line_number=line_num,
+                )
+            )
 
         return deps
 
@@ -564,13 +724,11 @@ class DependencyAnalyzer:
                 # Try to resolve the imported module to an actual file
                 target = self._resolve_import(file_path, dep.imported_module, dep.is_relative)
 
-                if target and target in self.file_nodes:
+                # Skip self-dependencies (file depending on itself)
+                if target and target in self.file_nodes and target != file_path:
                     # Add edge from source to dependency
                     self.graph.add_edge(
-                        file_path,
-                        target,
-                        import_type=dep.import_type,
-                        line_number=dep.line_number
+                        file_path, target, import_type=dep.import_type, line_number=dep.line_number
                     )
 
                     # Update imported_by lists
@@ -579,7 +737,9 @@ class DependencyAnalyzer:
 
         return self.graph
 
-    def _resolve_import(self, source_file: str, imported_module: str, is_relative: bool) -> Optional[str]:
+    def _resolve_import(
+        self, _source_file: str, imported_module: str, _is_relative: bool
+    ) -> str | None:
         """
         Resolve import statement to actual file path.
 
@@ -609,7 +769,7 @@ class DependencyAnalyzer:
 
         return None
 
-    def detect_cycles(self) -> List[List[str]]:
+    def detect_cycles(self) -> list[list[str]]:
         """
         Detect circular dependencies in the graph.
 
@@ -627,7 +787,7 @@ class DependencyAnalyzer:
             logger.error(f"Error detecting cycles: {e}")
             return []
 
-    def get_strongly_connected_components(self) -> List[Set[str]]:
+    def get_strongly_connected_components(self) -> list[set[str]]:
         """
         Get strongly connected components (groups of mutually dependent files).
 
@@ -645,13 +805,14 @@ class DependencyAnalyzer:
         """
         try:
             from networkx.drawing.nx_pydot import write_dot
+
             write_dot(self.graph, output_path)
             logger.info(f"Exported graph to DOT format: {output_path}")
         except ImportError:
             logger.warning("pydot not installed - cannot export to DOT format")
             logger.warning("Install with: pip install pydot")
 
-    def export_json(self) -> Dict[str, Any]:
+    def export_json(self) -> dict[str, Any]:
         """
         Export graph as JSON structure.
 
@@ -659,22 +820,19 @@ class DependencyAnalyzer:
             Dictionary with nodes and edges
         """
         return {
-            'nodes': [
-                {
-                    'file': node,
-                    'language': data.get('language', 'Unknown')
-                }
+            "nodes": [
+                {"file": node, "language": data.get("language", "Unknown")}
                 for node, data in self.graph.nodes(data=True)
             ],
-            'edges': [
+            "edges": [
                 {
-                    'source': source,
-                    'target': target,
-                    'import_type': data.get('import_type', 'unknown'),
-                    'line_number': data.get('line_number', 0)
+                    "source": source,
+                    "target": target,
+                    "import_type": data.get("import_type", "unknown"),
+                    "line_number": data.get("line_number", 0),
                 }
                 for source, target, data in self.graph.edges(data=True)
-            ]
+            ],
         }
 
     def export_mermaid(self) -> str:
@@ -684,7 +842,7 @@ class DependencyAnalyzer:
         Returns:
             Mermaid diagram as string
         """
-        lines = ['graph TD']
+        lines = ["graph TD"]
 
         # Create node labels (shorten file paths for readability)
         node_ids = {}
@@ -700,9 +858,9 @@ class DependencyAnalyzer:
             target_id = node_ids[target]
             lines.append(f"    {source_id} --> {target_id}")
 
-        return '\n'.join(lines)
+        return "\n".join(lines)
 
-    def get_statistics(self) -> Dict[str, Any]:
+    def get_statistics(self) -> dict[str, Any]:
         """
         Get graph statistics.
 
@@ -710,20 +868,64 @@ class DependencyAnalyzer:
             Dictionary with various statistics
         """
         return {
-            'total_files': self.graph.number_of_nodes(),
-            'total_dependencies': self.graph.number_of_edges(),
-            'circular_dependencies': len(self.detect_cycles()),
-            'strongly_connected_components': len(self.get_strongly_connected_components()),
-            'avg_dependencies_per_file': (
+            "total_files": self.graph.number_of_nodes(),
+            "total_dependencies": self.graph.number_of_edges(),
+            "circular_dependencies": len(self.detect_cycles()),
+            "strongly_connected_components": len(self.get_strongly_connected_components()),
+            "avg_dependencies_per_file": (
                 self.graph.number_of_edges() / self.graph.number_of_nodes()
-                if self.graph.number_of_nodes() > 0 else 0
+                if self.graph.number_of_nodes() > 0
+                else 0
             ),
-            'files_with_no_dependencies': len([
-                node for node in self.graph.nodes()
-                if self.graph.out_degree(node) == 0
-            ]),
-            'files_not_imported': len([
-                node for node in self.graph.nodes()
-                if self.graph.in_degree(node) == 0
-            ]),
+            "files_with_no_dependencies": len(
+                [node for node in self.graph.nodes() if self.graph.out_degree(node) == 0]
+            ),
+            "files_not_imported": len(
+                [node for node in self.graph.nodes() if self.graph.in_degree(node) == 0]
+            ),
         }
+
+    def _extract_godot_resources(self, content: str, file_path: str) -> list[DependencyInfo]:
+        """
+        Extract resource dependencies from Godot files (.tscn, .tres, .gdshader).
+
+        Extracts:
+        - ext_resource paths (scripts, scenes, textures, etc.)
+        - preload() and load() calls
+        """
+        deps = []
+
+        # Extract ext_resource dependencies
+        for match in re.finditer(r'\[ext_resource.*?path="(.+?)".*?\]', content):
+            resource_path = match.group(1)
+
+            # Convert res:// paths to relative paths
+            if resource_path.startswith("res://"):
+                resource_path = resource_path[6:]  # Remove res:// prefix
+
+            deps.append(
+                DependencyInfo(
+                    source_file=file_path,
+                    imported_module=resource_path,
+                    import_type="ext_resource",
+                    line_number=content[: match.start()].count("\n") + 1,
+                )
+            )
+
+        # Extract preload() and load() calls (in GDScript sections)
+        for match in re.finditer(r'(?:preload|load)\("(.+?)"\)', content):
+            resource_path = match.group(1)
+
+            if resource_path.startswith("res://"):
+                resource_path = resource_path[6:]
+
+            deps.append(
+                DependencyInfo(
+                    source_file=file_path,
+                    imported_module=resource_path,
+                    import_type="preload",
+                    line_number=content[: match.start()].count("\n") + 1,
+                )
+            )
+
+        return deps

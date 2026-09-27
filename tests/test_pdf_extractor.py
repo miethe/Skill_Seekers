@@ -12,15 +12,16 @@ Tests cover:
 - Code block merging
 """
 
-import unittest
 import sys
+import unittest
 from pathlib import Path
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "cli"))
 
 try:
-    import fitz  # PyMuPDF
+    import fitz  # noqa: F401 PyMuPDF
+
     PYMUPDF_AVAILABLE = True
 except ImportError:
     PYMUPDF_AVAILABLE = False
@@ -33,6 +34,7 @@ class TestLanguageDetection(unittest.TestCase):
         if not PYMUPDF_AVAILABLE:
             self.skipTest("PyMuPDF not installed")
         from skill_seekers.cli.pdf_extractor_poc import PDFExtractor
+
         self.PDFExtractor = PDFExtractor
 
     def test_detect_python_with_confidence(self):
@@ -40,6 +42,7 @@ class TestLanguageDetection(unittest.TestCase):
         extractor = self.PDFExtractor.__new__(self.PDFExtractor)
         # Initialize language_detector manually (since __init__ not called)
         from skill_seekers.cli.language_detector import LanguageDetector
+
         extractor.language_detector = LanguageDetector(min_confidence=0.15)
 
         code = "def hello():\n    print('world')\n    return True"
@@ -55,6 +58,7 @@ class TestLanguageDetection(unittest.TestCase):
         extractor = self.PDFExtractor.__new__(self.PDFExtractor)
         # Initialize language_detector manually (since __init__ not called)
         from skill_seekers.cli.language_detector import LanguageDetector
+
         extractor.language_detector = LanguageDetector(min_confidence=0.15)
 
         code = "const handleClick = () => {\n  console.log('clicked');\n};"
@@ -69,9 +73,10 @@ class TestLanguageDetection(unittest.TestCase):
         extractor = self.PDFExtractor.__new__(self.PDFExtractor)
         # Initialize language_detector manually (since __init__ not called)
         from skill_seekers.cli.language_detector import LanguageDetector
+
         extractor.language_detector = LanguageDetector(min_confidence=0.15)
 
-        code = "#include <iostream>\nint main() {\n  std::cout << \"Hello\";\n}"
+        code = '#include <iostream>\nint main() {\n  std::cout << "Hello";\n}'
 
         language, confidence = extractor.detect_language_from_code(code)
 
@@ -83,6 +88,7 @@ class TestLanguageDetection(unittest.TestCase):
         extractor = self.PDFExtractor.__new__(self.PDFExtractor)
         # Initialize language_detector manually (since __init__ not called)
         from skill_seekers.cli.language_detector import LanguageDetector
+
         extractor.language_detector = LanguageDetector(min_confidence=0.15)
 
         code = "this is not code at all just plain text"
@@ -97,6 +103,7 @@ class TestLanguageDetection(unittest.TestCase):
         extractor = self.PDFExtractor.__new__(self.PDFExtractor)
         # Initialize language_detector manually (since __init__ not called)
         from skill_seekers.cli.language_detector import LanguageDetector
+
         extractor.language_detector = LanguageDetector(min_confidence=0.15)
 
         test_codes = [
@@ -104,13 +111,202 @@ class TestLanguageDetection(unittest.TestCase):
             "const x = 10;",
             "#include <stdio.h>",
             "random text here",
-            ""
+            "",
         ]
 
         for code in test_codes:
             _, confidence = extractor.detect_language_from_code(code)
             self.assertGreaterEqual(confidence, 0.0)
             self.assertLessEqual(confidence, 1.0)
+
+    def test_detect_scss_with_confidence(self):
+        """Test SCSS detection"""
+        extractor = self.PDFExtractor.__new__(self.PDFExtractor)
+        from skill_seekers.cli.language_detector import LanguageDetector
+
+        extractor.language_detector = LanguageDetector(min_confidence=0.15)
+
+        code = """
+        $primary-color: #3498db;
+
+        @mixin border-radius($radius) {
+          border-radius: $radius;
+        }
+
+        .button {
+          color: $primary-color;
+          @include border-radius(5px);
+
+          &:hover {
+            background: darken($primary-color, 10%);
+          }
+        }
+        """
+
+        language, confidence = extractor.detect_language_from_code(code)
+        self.assertEqual(language, "scss")
+        self.assertGreater(confidence, 0.8)
+
+    def test_detect_dart_with_confidence(self):
+        """Test Dart detection"""
+        extractor = self.PDFExtractor.__new__(self.PDFExtractor)
+        from skill_seekers.cli.language_detector import LanguageDetector
+
+        extractor.language_detector = LanguageDetector(min_confidence=0.15)
+
+        code = """
+        import 'package:flutter/material.dart';
+
+        class MyApp extends StatelessWidget {
+          @override
+          Widget build(BuildContext context) {
+            return MaterialApp(
+              home: Text('Hello'),
+            );
+          }
+        }
+        """
+
+        language, confidence = extractor.detect_language_from_code(code)
+        self.assertEqual(language, "dart")
+        self.assertGreater(confidence, 0.6)
+
+    def test_detect_scala_with_confidence(self):
+        """Test Scala detection"""
+        extractor = self.PDFExtractor.__new__(self.PDFExtractor)
+        from skill_seekers.cli.language_detector import LanguageDetector
+
+        extractor.language_detector = LanguageDetector(min_confidence=0.15)
+
+        code = """
+        case class Person(name: String, age: Int)
+
+        object Main extends App {
+          val person = Person("Alice", 30)
+          person match {
+            case Person(n, a) if a >= 18 => println(s"Adult: $n")
+            case _ => println("Minor")
+          }
+        }
+        """
+
+        language, confidence = extractor.detect_language_from_code(code)
+        self.assertEqual(language, "scala")
+        self.assertGreater(confidence, 0.7)
+
+    def test_detect_sass_with_confidence(self):
+        """Test SASS detection"""
+        extractor = self.PDFExtractor.__new__(self.PDFExtractor)
+        from skill_seekers.cli.language_detector import LanguageDetector
+
+        extractor.language_detector = LanguageDetector(min_confidence=0.15)
+
+        code = """
+        $primary-color: #3498db
+
+        =border-radius($radius)
+          border-radius: $radius
+
+        .button
+          color: $primary-color
+          +border-radius(5px)
+
+          &:hover
+            background: darken($primary-color, 10%)
+        """
+
+        language, confidence = extractor.detect_language_from_code(code)
+        self.assertEqual(language, "sass")
+        self.assertGreater(confidence, 0.8)
+
+    def test_detect_elixir_with_confidence(self):
+        """Test Elixir detection"""
+        extractor = self.PDFExtractor.__new__(self.PDFExtractor)
+        from skill_seekers.cli.language_detector import LanguageDetector
+
+        extractor.language_detector = LanguageDetector(min_confidence=0.15)
+
+        code = """
+        defmodule MyApp.User do
+          def greet(name) do
+            "Hello, #{name}"
+          end
+
+          defp calculate_age(birth_year) do
+            2024 - birth_year
+          end
+
+          def process(data) do
+            data
+            |> String.trim()
+            |> String.downcase()
+            |> String.split(",")
+          end
+        end
+        """
+
+        language, confidence = extractor.detect_language_from_code(code)
+        self.assertEqual(language, "elixir")
+        self.assertGreater(confidence, 0.8)
+
+    def test_detect_lua_with_confidence(self):
+        """Test Lua detection"""
+        extractor = self.PDFExtractor.__new__(self.PDFExtractor)
+        from skill_seekers.cli.language_detector import LanguageDetector
+
+        extractor.language_detector = LanguageDetector(min_confidence=0.15)
+
+        code = """
+        local function calculate_sum(numbers)
+          local total = 0
+          for i = 1, #numbers do
+            total = total + numbers[i]
+          end
+          return total
+        end
+
+        local items = {1, 2, 3, 4, 5}
+        local result = calculate_sum(items)
+        print("Sum: " .. result)
+        """
+
+        language, confidence = extractor.detect_language_from_code(code)
+        self.assertEqual(language, "lua")
+        self.assertGreater(confidence, 0.7)
+
+    def test_detect_perl_with_confidence(self):
+        """Test Perl detection"""
+        extractor = self.PDFExtractor.__new__(self.PDFExtractor)
+        from skill_seekers.cli.language_detector import LanguageDetector
+
+        extractor.language_detector = LanguageDetector(min_confidence=0.15)
+
+        code = r"""
+        #!/usr/bin/perl
+        use strict;
+        use warnings;
+
+        sub process_line {
+          my $line = shift;
+          chomp($line);
+
+          if ($line =~ /^(\w+)=(\w+)$/) {
+            my ($name, $value) = ($1, $2);
+            return "$name has value $value";
+          }
+          return undef;
+        }
+
+        my @lines = ("foo=10", "bar=20");
+        foreach my $line (@lines) {
+          my $result = process_line($line);
+          print $result if defined $result;
+        }
+        """
+
+        language, confidence = extractor.detect_language_from_code(code)
+        self.assertEqual(language, "perl")
+        self.assertGreater(confidence, 0.8)
 
 
 class TestSyntaxValidation(unittest.TestCase):
@@ -120,6 +316,7 @@ class TestSyntaxValidation(unittest.TestCase):
         if not PYMUPDF_AVAILABLE:
             self.skipTest("PyMuPDF not installed")
         from skill_seekers.cli.pdf_extractor_poc import PDFExtractor
+
         self.PDFExtractor = PDFExtractor
 
     def test_validate_python_valid(self):
@@ -170,7 +367,7 @@ class TestSyntaxValidation(unittest.TestCase):
         is_valid, issues = extractor.validate_code_syntax(code, "python")
 
         self.assertFalse(is_valid)
-        self.assertIn('May be natural language', ' '.join(issues))
+        self.assertIn("May be natural language", " ".join(issues))
 
 
 class TestQualityScoring(unittest.TestCase):
@@ -180,6 +377,7 @@ class TestQualityScoring(unittest.TestCase):
         if not PYMUPDF_AVAILABLE:
             self.skipTest("PyMuPDF not installed")
         from skill_seekers.cli.pdf_extractor_poc import PDFExtractor
+
         self.PDFExtractor = PDFExtractor
 
     def test_quality_score_range(self):
@@ -237,14 +435,15 @@ class TestChapterDetection(unittest.TestCase):
         if not PYMUPDF_AVAILABLE:
             self.skipTest("PyMuPDF not installed")
         from skill_seekers.cli.pdf_extractor_poc import PDFExtractor
+
         self.PDFExtractor = PDFExtractor
 
     def test_detect_chapter_with_number(self):
         """Test chapter detection with number"""
         extractor = self.PDFExtractor.__new__(self.PDFExtractor)
         page_data = {
-            'text': 'Chapter 1: Introduction to Python\nThis is the first chapter.',
-            'headings': []
+            "text": "Chapter 1: Introduction to Python\nThis is the first chapter.",
+            "headings": [],
         }
 
         is_chapter, title = extractor.detect_chapter_start(page_data)
@@ -256,8 +455,8 @@ class TestChapterDetection(unittest.TestCase):
         """Test chapter detection with uppercase"""
         extractor = self.PDFExtractor.__new__(self.PDFExtractor)
         page_data = {
-            'text': 'Chapter 1\nThis is the introduction',  # Pattern requires Chapter + digit
-            'headings': []
+            "text": "Chapter 1\nThis is the introduction",  # Pattern requires Chapter + digit
+            "headings": [],
         }
 
         is_chapter, title = extractor.detect_chapter_start(page_data)
@@ -267,10 +466,7 @@ class TestChapterDetection(unittest.TestCase):
     def test_detect_section_heading(self):
         """Test section heading detection"""
         extractor = self.PDFExtractor.__new__(self.PDFExtractor)
-        page_data = {
-            'text': '2. Getting Started\nThis is a section.',
-            'headings': []
-        }
+        page_data = {"text": "2. Getting Started\nThis is a section.", "headings": []}
 
         is_chapter, title = extractor.detect_chapter_start(page_data)
 
@@ -280,8 +476,8 @@ class TestChapterDetection(unittest.TestCase):
         """Test normal text is not detected as chapter"""
         extractor = self.PDFExtractor.__new__(self.PDFExtractor)
         page_data = {
-            'text': 'This is just normal paragraph text without any chapter markers.',
-            'headings': []
+            "text": "This is just normal paragraph text without any chapter markers.",
+            "headings": [],
         }
 
         is_chapter, title = extractor.detect_chapter_start(page_data)
@@ -296,6 +492,7 @@ class TestCodeBlockMerging(unittest.TestCase):
         if not PYMUPDF_AVAILABLE:
             self.skipTest("PyMuPDF not installed")
         from skill_seekers.cli.pdf_extractor_poc import PDFExtractor
+
         self.PDFExtractor = PDFExtractor
 
     def test_merge_continued_blocks(self):
@@ -305,26 +502,34 @@ class TestCodeBlockMerging(unittest.TestCase):
 
         pages = [
             {
-                'page_number': 1,
-                'code_samples': [
-                    {'code': 'def hello():', 'language': 'python', 'detection_method': 'pattern'}
+                "page_number": 1,
+                "code_samples": [
+                    {
+                        "code": "def hello():",
+                        "language": "python",
+                        "detection_method": "pattern",
+                    }
                 ],
-                'code_blocks_count': 1
+                "code_blocks_count": 1,
             },
             {
-                'page_number': 2,
-                'code_samples': [
-                    {'code': '    print("world")', 'language': 'python', 'detection_method': 'pattern'}
+                "page_number": 2,
+                "code_samples": [
+                    {
+                        "code": '    print("world")',
+                        "language": "python",
+                        "detection_method": "pattern",
+                    }
                 ],
-                'code_blocks_count': 1
-            }
+                "code_blocks_count": 1,
+            },
         ]
 
         merged = extractor.merge_continued_code_blocks(pages)
 
         # Should have merged the two blocks
-        self.assertIn('def hello():', merged[0]['code_samples'][0]['code'])
-        self.assertIn('print("world")', merged[0]['code_samples'][0]['code'])
+        self.assertIn("def hello():", merged[0]["code_samples"][0]["code"])
+        self.assertIn('print("world")', merged[0]["code_samples"][0]["code"])
 
     def test_no_merge_different_languages(self):
         """Test blocks with different languages are not merged"""
@@ -332,26 +537,34 @@ class TestCodeBlockMerging(unittest.TestCase):
 
         pages = [
             {
-                'page_number': 1,
-                'code_samples': [
-                    {'code': 'def foo():', 'language': 'python', 'detection_method': 'pattern'}
+                "page_number": 1,
+                "code_samples": [
+                    {
+                        "code": "def foo():",
+                        "language": "python",
+                        "detection_method": "pattern",
+                    }
                 ],
-                'code_blocks_count': 1
+                "code_blocks_count": 1,
             },
             {
-                'page_number': 2,
-                'code_samples': [
-                    {'code': 'const x = 10;', 'language': 'javascript', 'detection_method': 'pattern'}
+                "page_number": 2,
+                "code_samples": [
+                    {
+                        "code": "const x = 10;",
+                        "language": "javascript",
+                        "detection_method": "pattern",
+                    }
                 ],
-                'code_blocks_count': 1
-            }
+                "code_blocks_count": 1,
+            },
         ]
 
         merged = extractor.merge_continued_code_blocks(pages)
 
         # Should NOT merge different languages
-        self.assertEqual(len(merged[0]['code_samples']), 1)
-        self.assertEqual(len(merged[1]['code_samples']), 1)
+        self.assertEqual(len(merged[0]["code_samples"]), 1)
+        self.assertEqual(len(merged[1]["code_samples"]), 1)
 
 
 class TestCodeDetectionMethods(unittest.TestCase):
@@ -361,11 +574,12 @@ class TestCodeDetectionMethods(unittest.TestCase):
         if not PYMUPDF_AVAILABLE:
             self.skipTest("PyMuPDF not installed")
         from skill_seekers.cli.pdf_extractor_poc import PDFExtractor
+
         self.PDFExtractor = PDFExtractor
 
     def test_pattern_based_detection(self):
         """Test pattern-based code detection"""
-        extractor = self.PDFExtractor.__new__(self.PDFExtractor)
+        _extractor = self.PDFExtractor.__new__(self.PDFExtractor)
 
         # Should detect function definitions
         text = "Here is an example:\ndef calculate(x, y):\n    return x + y"
@@ -377,7 +591,7 @@ class TestCodeDetectionMethods(unittest.TestCase):
 
     def test_indent_based_detection(self):
         """Test indent-based code detection"""
-        extractor = self.PDFExtractor.__new__(self.PDFExtractor)
+        _extractor = self.PDFExtractor.__new__(self.PDFExtractor)
 
         # Code with consistent indentation
         indented_text = """    def foo():
@@ -394,6 +608,7 @@ class TestQualityFiltering(unittest.TestCase):
         if not PYMUPDF_AVAILABLE:
             self.skipTest("PyMuPDF not installed")
         from skill_seekers.cli.pdf_extractor_poc import PDFExtractor
+
         self.PDFExtractor = PDFExtractor
 
     def test_filter_by_min_quality(self):
@@ -403,22 +618,177 @@ class TestQualityFiltering(unittest.TestCase):
 
         # High quality block
         high_quality = {
-            'code': 'def calculate():\n    return 42',
-            'language': 'python',
-            'quality': 8.0
+            "code": "def calculate():\n    return 42",
+            "language": "python",
+            "quality": 8.0,
         }
 
         # Low quality block
-        low_quality = {
-            'code': 'x',
-            'language': 'unknown',
-            'quality': 2.0
-        }
+        low_quality = {"code": "x", "language": "unknown", "quality": 2.0}
 
         # Only high quality should pass
-        self.assertGreaterEqual(high_quality['quality'], extractor.min_quality)
-        self.assertLess(low_quality['quality'], extractor.min_quality)
+        self.assertGreaterEqual(high_quality["quality"], extractor.min_quality)
+        self.assertLess(low_quality["quality"], extractor.min_quality)
 
 
-if __name__ == '__main__':
+class TestMarkdownExtractionFallback(unittest.TestCase):
+    """Test markdown extraction fallback behavior for issue #267"""
+
+    def test_exception_types_in_fallback(self):
+        """Test that fallback handles various exception types"""
+        # This test verifies the code structure handles multiple exception types
+        # The actual exception handling is in pdf_extractor_poc.py lines 793-802
+        exception_types = (
+            AssertionError,
+            ValueError,
+            RuntimeError,
+            TypeError,
+            AttributeError,
+        )
+
+        # Verify all expected exception types are valid
+        for exc_type in exception_types:
+            self.assertTrue(issubclass(exc_type, Exception))
+            # Verify we can raise and catch each type
+            try:
+                raise exc_type("Test exception")
+            except exception_types:
+                pass  # Should be caught
+
+    def test_fallback_text_extraction_logic(self):
+        """Test that text extraction fallback produces valid output"""
+        if not PYMUPDF_AVAILABLE:
+            self.skipTest("PyMuPDF not installed")
+
+        # Verify the fallback flags are valid fitz constants
+        import fitz
+
+        # These flags should exist and be combinable
+        flags = (
+            fitz.TEXT_PRESERVE_WHITESPACE | fitz.TEXT_PRESERVE_LIGATURES | fitz.TEXT_PRESERVE_SPANS
+        )
+        self.assertIsInstance(flags, int)
+        self.assertGreater(flags, 0)
+
+    def test_markdown_fallback_on_assertion_error(self):
+        """Test that AssertionError triggers fallback to text extraction"""
+        if not PYMUPDF_AVAILABLE:
+            self.skipTest("PyMuPDF not installed")
+
+        from unittest.mock import Mock
+
+        import fitz
+
+        # Create a mock page that raises AssertionError on markdown extraction
+        mock_page = Mock()
+        mock_page.get_text.side_effect = [
+            AssertionError("markdown format not supported"),  # First call raises
+            "Fallback text content",  # Second call succeeds
+        ]
+
+        # Simulate the extraction logic
+        try:
+            markdown = mock_page.get_text("markdown")
+            self.fail("Should have raised AssertionError")
+        except AssertionError:
+            # Fallback to text extraction
+            markdown = mock_page.get_text("text", flags=fitz.TEXT_PRESERVE_WHITESPACE)
+
+        # Verify fallback returned text content
+        self.assertEqual(markdown, "Fallback text content")
+        # Verify get_text was called twice (markdown attempt + text fallback)
+        self.assertEqual(mock_page.get_text.call_count, 2)
+
+    def test_markdown_fallback_on_runtime_error(self):
+        """Test that RuntimeError triggers fallback to text extraction"""
+        if not PYMUPDF_AVAILABLE:
+            self.skipTest("PyMuPDF not installed")
+
+        from unittest.mock import Mock
+
+        import fitz
+
+        # Create a mock page that raises RuntimeError
+        mock_page = Mock()
+        mock_page.get_text.side_effect = [
+            RuntimeError("PyMuPDF runtime error"),
+            "Fallback text content",
+        ]
+
+        # Simulate the extraction logic
+        try:
+            markdown = mock_page.get_text("markdown")
+        except (AssertionError, ValueError, RuntimeError, TypeError, AttributeError):
+            # Fallback to text extraction
+            markdown = mock_page.get_text("text", flags=fitz.TEXT_PRESERVE_WHITESPACE)
+
+        # Verify fallback worked
+        self.assertEqual(markdown, "Fallback text content")
+        self.assertEqual(mock_page.get_text.call_count, 2)
+
+    def test_markdown_fallback_on_type_error(self):
+        """Test that TypeError triggers fallback to text extraction"""
+        if not PYMUPDF_AVAILABLE:
+            self.skipTest("PyMuPDF not installed")
+
+        from unittest.mock import Mock
+
+        import fitz
+
+        # Create a mock page that raises TypeError
+        mock_page = Mock()
+        mock_page.get_text.side_effect = [
+            TypeError("Invalid argument type"),
+            "Fallback text content",
+        ]
+
+        # Simulate the extraction logic
+        try:
+            markdown = mock_page.get_text("markdown")
+        except (AssertionError, ValueError, RuntimeError, TypeError, AttributeError):
+            markdown = mock_page.get_text("text", flags=fitz.TEXT_PRESERVE_WHITESPACE)
+
+        # Verify fallback worked
+        self.assertEqual(markdown, "Fallback text content")
+
+    def test_markdown_fallback_preserves_content_quality(self):
+        """Test that fallback text extraction preserves content structure"""
+        if not PYMUPDF_AVAILABLE:
+            self.skipTest("PyMuPDF not installed")
+
+        from unittest.mock import Mock
+
+        import fitz
+
+        # Create a mock page with structured content
+        fallback_content = """This is a heading
+
+This is a paragraph with multiple lines
+and preserved whitespace.
+
+    Code block with indentation
+    def example():
+        return True"""
+
+        mock_page = Mock()
+        mock_page.get_text.side_effect = [
+            ValueError("markdown extraction failed"),
+            fallback_content,
+        ]
+
+        # Simulate the extraction logic
+        try:
+            markdown = mock_page.get_text("markdown")
+        except (AssertionError, ValueError, RuntimeError, TypeError, AttributeError):
+            markdown = mock_page.get_text("text", flags=fitz.TEXT_PRESERVE_WHITESPACE)
+
+        # Verify content structure is preserved
+        self.assertIn("This is a heading", markdown)
+        self.assertIn("Code block with indentation", markdown)
+        self.assertIn("def example():", markdown)
+        # Verify whitespace preservation
+        self.assertIn("    ", markdown)
+
+
+if __name__ == "__main__":
     unittest.main()

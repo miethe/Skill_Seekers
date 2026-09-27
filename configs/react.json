@@ -1,31 +1,69 @@
 {
   "name": "react",
-  "description": "React framework for building user interfaces. Use for React components, hooks, state management, JSX, and modern frontend development.",
-  "base_url": "https://react.dev/",
-  "start_urls": [
-    "https://react.dev/learn",
-    "https://react.dev/learn/quick-start",
-    "https://react.dev/learn/thinking-in-react",
-    "https://react.dev/reference/react",
-    "https://react.dev/reference/react-dom",
-    "https://react.dev/reference/react/hooks"
+  "description": "Complete React knowledge base combining official documentation and React codebase insights. Use when working with React, understanding API changes, or debugging React internals.",
+  "version": "1.1.0",
+  "merge_mode": "rule-based",
+  "sources": [
+    {
+      "type": "documentation",
+      "base_url": "https://react.dev/",
+      "extract_api": true,
+      "selectors": {
+        "main_content": "article",
+        "title": "h1",
+        "code_blocks": "pre code"
+      },
+      "url_patterns": {
+        "include": [],
+        "exclude": [
+          "/blog/",
+          "/community/"
+        ]
+      },
+      "categories": {
+        "getting_started": [
+          "learn",
+          "installation",
+          "quick-start"
+        ],
+        "components": [
+          "components",
+          "props",
+          "state"
+        ],
+        "hooks": [
+          "hooks",
+          "usestate",
+          "useeffect",
+          "usecontext"
+        ],
+        "api": [
+          "api",
+          "reference"
+        ],
+        "advanced": [
+          "context",
+          "refs",
+          "portals",
+          "suspense"
+        ]
+      },
+      "rate_limit": 0.5
+    },
+    {
+      "type": "github",
+      "repo": "facebook/react",
+      "enable_codebase_analysis": true,
+      "code_analysis_depth": "deep",
+      "fetch_issues": true,
+      "max_issues": 100,
+      "fetch_changelog": true,
+      "fetch_releases": true,
+      "file_patterns": [
+        "packages/react/src/**/*.js",
+        "packages/react-dom/src/**/*.js"
+      ]
+    }
   ],
-  "selectors": {
-    "main_content": "article",
-    "title": "h1",
-    "code_blocks": "pre code"
-  },
-  "url_patterns": {
-    "include": ["/learn", "/reference"],
-    "exclude": ["/community", "/blog"]
-  },
-  "categories": {
-    "getting_started": ["quick-start", "installation", "tutorial"],
-    "hooks": ["usestate", "useeffect", "usememo", "usecallback", "usecontext", "useref", "hook"],
-    "components": ["component", "props", "jsx"],
-    "state": ["state", "context", "reducer"],
-    "api": ["api", "reference"]
-  },
-  "rate_limit": 0.5,
-  "max_pages": 300
+  "base_url": "https://react.dev/"
 }

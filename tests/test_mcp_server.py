@@ -4,15 +4,14 @@ Comprehensive test suite for Skill Seeker MCP Server
 Tests all MCP tools and server functionality
 """
 
-import sys
-import os
-import unittest
 import json
-import tempfile
+import os
 import shutil
-import asyncio
+import sys
+import tempfile
+import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch, AsyncMock, MagicMock
+from unittest.mock import MagicMock, patch
 
 # CRITICAL: Import MCP package BEFORE adding project to path
 # to avoid shadowing the installed mcp package with our local mcp/ directory
@@ -21,9 +20,10 @@ from unittest.mock import Mock, patch, AsyncMock, MagicMock
 # This avoids our local mcp/ directory being in the import path
 _original_dir = os.getcwd()
 try:
-    os.chdir('/tmp')  # Change away from project directory
-    from mcp.server import Server
-    from mcp.types import Tool, TextContent
+    os.chdir("/tmp")  # Change away from project directory
+    from mcp.server import Server  # noqa: F401
+    from mcp.types import TextContent, Tool  # noqa: F401
+
     MCP_AVAILABLE = True
 except ImportError:
     MCP_AVAILABLE = False
@@ -51,11 +51,13 @@ class TestMCPServerInitialization(unittest.TestCase):
     def test_server_import(self):
         """Test that server module can be imported"""
         from mcp import server as mcp_server_module
+
         self.assertIsNotNone(mcp_server_module)
 
     def test_server_initialization(self):
         """Test server initializes correctly"""
         import mcp.server
+
         app = mcp.server.Server("test-skill-seeker")
         self.assertEqual(app.name, "test-skill-seeker")
 
@@ -79,7 +81,7 @@ class TestListTools(unittest.IsolatedAsyncioTestCase):
             "scrape_docs",
             "package_skill",
             "list_configs",
-            "validate_config"
+            "validate_config",
         ]
 
         for expected in expected_tools:
@@ -120,7 +122,7 @@ class TestGenerateConfigTool(unittest.IsolatedAsyncioTestCase):
         args = {
             "name": "test-framework",
             "url": "https://test-framework.dev/",
-            "description": "Test framework skill"
+            "description": "Test framework skill",
         }
 
         result = await skill_seeker_server.generate_config_tool(args)
@@ -134,12 +136,16 @@ class TestGenerateConfigTool(unittest.IsolatedAsyncioTestCase):
         config_path = Path("configs/test-framework.json")
         self.assertTrue(config_path.exists())
 
-        # Verify config content
+        # Verify config content (unified format)
         with open(config_path) as f:
             config = json.load(f)
             self.assertEqual(config["name"], "test-framework")
-            self.assertEqual(config["base_url"], "https://test-framework.dev/")
             self.assertEqual(config["description"], "Test framework skill")
+            # Check unified format structure
+            self.assertIn("sources", config)
+            self.assertEqual(len(config["sources"]), 1)
+            self.assertEqual(config["sources"][0]["type"], "documentation")
+            self.assertEqual(config["sources"][0]["base_url"], "https://test-framework.dev/")
 
     async def test_generate_config_with_options(self):
         """Test config generation with custom options"""
@@ -148,33 +154,30 @@ class TestGenerateConfigTool(unittest.IsolatedAsyncioTestCase):
             "url": "https://custom.dev/",
             "description": "Custom skill",
             "max_pages": 200,
-            "rate_limit": 1.0
+            "rate_limit": 1.0,
         }
 
-        result = await skill_seeker_server.generate_config_tool(args)
+        _result = await skill_seeker_server.generate_config_tool(args)
 
-        # Verify config has custom options
+        # Verify config has custom options (unified format)
         config_path = Path("configs/custom-framework.json")
         with open(config_path) as f:
             config = json.load(f)
-            self.assertEqual(config["max_pages"], 200)
-            self.assertEqual(config["rate_limit"], 1.0)
+            self.assertEqual(config["sources"][0]["max_pages"], 200)
+            self.assertEqual(config["sources"][0]["rate_limit"], 1.0)
 
     async def test_generate_config_defaults(self):
         """Test that default values are applied correctly"""
-        args = {
-            "name": "default-test",
-            "url": "https://test.dev/",
-            "description": "Test defaults"
-        }
+        args = {"name": "default-test", "url": "https://test.dev/", "description": "Test defaults"}
 
-        result = await skill_seeker_server.generate_config_tool(args)
+        _result = await skill_seeker_server.generate_config_tool(args)
 
         config_path = Path("configs/default-test.json")
         with open(config_path) as f:
             config = json.load(f)
-            self.assertEqual(config["max_pages"], 100)  # Default
-            self.assertEqual(config["rate_limit"], 0.5)  # Default
+            # Check unified format defaults
+            self.assertEqual(config["sources"][0]["max_pages"], 100)  # Default
+            self.assertEqual(config["sources"][0]["rate_limit"], 0.5)  # Default
 
 
 @unittest.skipUnless(MCP_AVAILABLE, "MCP package not installed")
@@ -193,15 +196,11 @@ class TestEstimatePagesTool(unittest.IsolatedAsyncioTestCase):
         config_data = {
             "name": "test",
             "base_url": "https://example.com/",
-            "selectors": {
-                "main_content": "article",
-                "title": "h1",
-                "code_blocks": "pre"
-            },
+            "selectors": {"main_content": "article", "title": "h1", "code_blocks": "pre"},
             "rate_limit": 0.5,
-            "max_pages": 50
+            "max_pages": 50,
         }
-        with open(self.config_path, 'w') as f:
+        with open(self.config_path, "w") as f:
             json.dump(config_data, f)
 
     async def asyncTearDown(self):
@@ -209,16 +208,14 @@ class TestEstimatePagesTool(unittest.IsolatedAsyncioTestCase):
         os.chdir(self.original_cwd)
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
-    @patch('skill_seekers.mcp.tools.scraping_tools.run_subprocess_with_streaming')
+    @patch("skill_seekers.mcp.tools.scraping_tools.run_subprocess_with_streaming")
     async def test_estimate_pages_success(self, mock_streaming):
         """Test successful page estimation"""
         # Mock successful subprocess run with streaming
         # Returns (stdout, stderr, returncode)
         mock_streaming.return_value = ("Estimated 50 pages", "", 0)
 
-        args = {
-            "config_path": str(self.config_path)
-        }
+        args = {"config_path": str(self.config_path)}
 
         result = await skill_seeker_server.estimate_pages_tool(args)
 
@@ -228,18 +225,15 @@ class TestEstimatePagesTool(unittest.IsolatedAsyncioTestCase):
         # Should also have progress message
         self.assertIn("Estimating page count", result[0].text)
 
-    @patch('skill_seekers.mcp.tools.scraping_tools.run_subprocess_with_streaming')
+    @patch("skill_seekers.mcp.tools.scraping_tools.run_subprocess_with_streaming")
     async def test_estimate_pages_with_max_discovery(self, mock_streaming):
         """Test page estimation with custom max_discovery"""
         # Mock successful subprocess run with streaming
         mock_streaming.return_value = ("Estimated 100 pages", "", 0)
 
-        args = {
-            "config_path": str(self.config_path),
-            "max_discovery": 500
-        }
+        args = {"config_path": str(self.config_path), "max_discovery": 500}
 
-        result = await skill_seeker_server.estimate_pages_tool(args)
+        _result = await skill_seeker_server.estimate_pages_tool(args)
 
         # Verify subprocess was called with correct args
         mock_streaming.assert_called_once()
@@ -247,15 +241,13 @@ class TestEstimatePagesTool(unittest.IsolatedAsyncioTestCase):
         self.assertIn("--max-discovery", call_args)
         self.assertIn("500", call_args)
 
-    @patch('skill_seekers.mcp.tools.scraping_tools.run_subprocess_with_streaming')
+    @patch("skill_seekers.mcp.tools.scraping_tools.run_subprocess_with_streaming")
     async def test_estimate_pages_error(self, mock_streaming):
         """Test error handling in page estimation"""
         # Mock failed subprocess run with streaming
         mock_streaming.return_value = ("", "Config file not found", 1)
 
-        args = {
-            "config_path": "nonexistent.json"
-        }
+        args = {"config_path": "nonexistent.json"}
 
         result = await skill_seeker_server.estimate_pages_tool(args)
 
@@ -278,13 +270,9 @@ class TestScrapeDocsTool(unittest.IsolatedAsyncioTestCase):
         config_data = {
             "name": "test",
             "base_url": "https://example.com/",
-            "selectors": {
-                "main_content": "article",
-                "title": "h1",
-                "code_blocks": "pre"
-            }
+            "selectors": {"main_content": "article", "title": "h1", "code_blocks": "pre"},
         }
-        with open(self.config_path, 'w') as f:
+        with open(self.config_path, "w") as f:
             json.dump(config_data, f)
 
     async def asyncTearDown(self):
@@ -292,66 +280,55 @@ class TestScrapeDocsTool(unittest.IsolatedAsyncioTestCase):
         os.chdir(self.original_cwd)
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
-    @patch('skill_seekers.mcp.tools.scraping_tools.run_subprocess_with_streaming')
+    @patch("skill_seekers.mcp.tools.scraping_tools.run_subprocess_with_streaming")
     async def test_scrape_docs_basic(self, mock_streaming):
         """Test basic documentation scraping"""
         # Mock successful subprocess run with streaming
         mock_streaming.return_value = ("Scraping completed successfully", "", 0)
 
-        args = {
-            "config_path": str(self.config_path)
-        }
+        args = {"config_path": str(self.config_path)}
 
         result = await skill_seeker_server.scrape_docs_tool(args)
 
         self.assertIsInstance(result, list)
         self.assertIn("success", result[0].text.lower())
 
-    @patch('skill_seekers.mcp.tools.scraping_tools.run_subprocess_with_streaming')
+    @patch("skill_seekers.mcp.tools.scraping_tools.run_subprocess_with_streaming")
     async def test_scrape_docs_with_skip_scrape(self, mock_streaming):
         """Test scraping with skip_scrape flag"""
         # Mock successful subprocess run with streaming
         mock_streaming.return_value = ("Using cached data", "", 0)
 
-        args = {
-            "config_path": str(self.config_path),
-            "skip_scrape": True
-        }
+        args = {"config_path": str(self.config_path), "skip_scrape": True}
 
-        result = await skill_seeker_server.scrape_docs_tool(args)
+        _result = await skill_seeker_server.scrape_docs_tool(args)
 
         # Verify --skip-scrape was passed
         call_args = mock_streaming.call_args[0][0]
         self.assertIn("--skip-scrape", call_args)
 
-    @patch('skill_seekers.mcp.tools.scraping_tools.run_subprocess_with_streaming')
+    @patch("skill_seekers.mcp.tools.scraping_tools.run_subprocess_with_streaming")
     async def test_scrape_docs_with_dry_run(self, mock_streaming):
         """Test scraping with dry_run flag"""
         # Mock successful subprocess run with streaming
         mock_streaming.return_value = ("Dry run completed", "", 0)
 
-        args = {
-            "config_path": str(self.config_path),
-            "dry_run": True
-        }
+        args = {"config_path": str(self.config_path), "dry_run": True}
 
-        result = await skill_seeker_server.scrape_docs_tool(args)
+        _result = await skill_seeker_server.scrape_docs_tool(args)
 
         call_args = mock_streaming.call_args[0][0]
         self.assertIn("--dry-run", call_args)
 
-    @patch('skill_seekers.mcp.tools.scraping_tools.run_subprocess_with_streaming')
+    @patch("skill_seekers.mcp.tools.scraping_tools.run_subprocess_with_streaming")
     async def test_scrape_docs_with_enhance_local(self, mock_streaming):
         """Test scraping with local enhancement"""
         # Mock successful subprocess run with streaming
         mock_streaming.return_value = ("Scraping with enhancement", "", 0)
 
-        args = {
-            "config_path": str(self.config_path),
-            "enhance_local": True
-        }
+        args = {"config_path": str(self.config_path), "enhance_local": True}
 
-        result = await skill_seeker_server.scrape_docs_tool(args)
+        _result = await skill_seeker_server.scrape_docs_tool(args)
 
         call_args = mock_streaming.call_args[0][0]
         self.assertIn("--enhance-local", call_args)
@@ -379,7 +356,7 @@ class TestPackageSkillTool(unittest.IsolatedAsyncioTestCase):
         os.chdir(self.original_cwd)
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
-    @patch('subprocess.run')
+    @patch("subprocess.run")
     async def test_package_skill_success(self, mock_run):
         """Test successful skill packaging"""
         mock_result = MagicMock()
@@ -387,16 +364,14 @@ class TestPackageSkillTool(unittest.IsolatedAsyncioTestCase):
         mock_result.stdout = "Package created: test-skill.zip"
         mock_run.return_value = mock_result
 
-        args = {
-            "skill_dir": str(self.skill_dir)
-        }
+        args = {"skill_dir": str(self.skill_dir)}
 
         result = await skill_seeker_server.package_skill_tool(args)
 
         self.assertIsInstance(result, list)
         self.assertIn("test-skill", result[0].text)
 
-    @patch('subprocess.run')
+    @patch("subprocess.run")
     async def test_package_skill_error(self, mock_run):
         """Test error handling in skill packaging"""
         mock_result = MagicMock()
@@ -404,9 +379,7 @@ class TestPackageSkillTool(unittest.IsolatedAsyncioTestCase):
         mock_result.stderr = "Directory not found"
         mock_run.return_value = mock_result
 
-        args = {
-            "skill_dir": "nonexistent-dir"
-        }
+        args = {"skill_dir": "nonexistent-dir"}
 
         result = await skill_seeker_server.package_skill_tool(args)
 
@@ -427,21 +400,13 @@ class TestListConfigsTool(unittest.IsolatedAsyncioTestCase):
         os.makedirs("configs", exist_ok=True)
 
         configs = [
-            {
-                "name": "test1",
-                "description": "Test 1 skill",
-                "base_url": "https://test1.dev/"
-            },
-            {
-                "name": "test2",
-                "description": "Test 2 skill",
-                "base_url": "https://test2.dev/"
-            }
+            {"name": "test1", "description": "Test 1 skill", "base_url": "https://test1.dev/"},
+            {"name": "test2", "description": "Test 2 skill", "base_url": "https://test2.dev/"},
         ]
 
         for config in configs:
             path = Path(f"configs/{config['name']}.json")
-            with open(path, 'w') as f:
+            with open(path, "w") as f:
                 json.dump(config, f)
 
     async def asyncTearDown(self):
@@ -499,25 +464,25 @@ class TestValidateConfigTool(unittest.IsolatedAsyncioTestCase):
 
     async def test_validate_valid_config(self):
         """Test validating a valid config"""
-        # Create valid config
+        # Create valid config (unified format)
         config_path = Path("configs/valid.json")
         valid_config = {
             "name": "valid-test",
-            "base_url": "https://example.com/",
-            "selectors": {
-                "main_content": "article",
-                "title": "h1",
-                "code_blocks": "pre"
-            },
-            "rate_limit": 0.5,
-            "max_pages": 100
+            "description": "Test configuration",
+            "sources": [
+                {
+                    "type": "documentation",
+                    "base_url": "https://example.com/",
+                    "selectors": {"main_content": "article", "title": "h1", "code_blocks": "pre"},
+                    "rate_limit": 0.5,
+                    "max_pages": 100,
+                }
+            ],
         }
-        with open(config_path, 'w') as f:
+        with open(config_path, "w") as f:
             json.dump(valid_config, f)
 
-        args = {
-            "config_path": str(config_path)
-        }
+        args = {"config_path": str(config_path)}
 
         result = await skill_seeker_server.validate_config_tool(args)
 
@@ -533,14 +498,12 @@ class TestValidateConfigTool(unittest.IsolatedAsyncioTestCase):
             "description": "Missing name field",
             "sources": [
                 {"type": "invalid_type", "url": "https://example.com"}  # Invalid source type
-            ]
+            ],
         }
-        with open(config_path, 'w') as f:
+        with open(config_path, "w") as f:
             json.dump(invalid_config, f)
 
-        args = {
-            "config_path": str(config_path)
-        }
+        args = {"config_path": str(config_path)}
 
         result = await skill_seeker_server.validate_config_tool(args)
 
@@ -549,9 +512,7 @@ class TestValidateConfigTool(unittest.IsolatedAsyncioTestCase):
 
     async def test_validate_nonexistent_config(self):
         """Test validating a nonexistent config"""
-        args = {
-            "config_path": "configs/nonexistent.json"
-        }
+        args = {"config_path": "configs/nonexistent.json"}
 
         result = await skill_seeker_server.validate_config_tool(args)
 
@@ -593,15 +554,13 @@ class TestMCPServerIntegration(unittest.IsolatedAsyncioTestCase):
             generate_args = {
                 "name": "workflow-test",
                 "url": "https://workflow-test.dev/",
-                "description": "Workflow test skill"
+                "description": "Workflow test skill",
             }
             result1 = await skill_seeker_server.generate_config_tool(generate_args)
             self.assertIn("✅", result1[0].text)
 
             # Step 2: Validate config
-            validate_args = {
-                "config_path": "configs/workflow-test.json"
-            }
+            validate_args = {"config_path": "configs/workflow-test.json"}
             result2 = await skill_seeker_server.validate_config_tool(validate_args)
             self.assertIn("✅", result2[0].text)
 
@@ -621,7 +580,7 @@ class TestSubmitConfigTool(unittest.IsolatedAsyncioTestCase):
     async def test_submit_config_requires_token(self):
         """Should error without GitHub token"""
         args = {
-            "config_json": '{"name": "test", "description": "Test", "base_url": "https://example.com"}'
+            "config_json": '{"name": "test", "description": "Test", "sources": [{"type": "documentation", "base_url": "https://example.com"}]}'
         }
         result = await skill_seeker_server.submit_config_tool(args)
         self.assertIn("GitHub token required", result[0].text)
@@ -629,19 +588,25 @@ class TestSubmitConfigTool(unittest.IsolatedAsyncioTestCase):
     async def test_submit_config_validates_required_fields(self):
         """Should reject config missing required fields"""
         args = {
-            "config_json": '{"name": "test"}',  # Missing description, base_url
-            "github_token": "fake_token"
+            "config_json": '{"name": "test"}',  # Missing description and sources
+            "github_token": "fake_token",
         }
         result = await skill_seeker_server.submit_config_tool(args)
-        self.assertIn("validation failed", result[0].text.lower())
-        # ConfigValidator detects missing config type (base_url/repo/pdf)
-        self.assertTrue("cannot detect" in result[0].text.lower() or "missing" in result[0].text.lower())
+        # Should fail validation for missing required fields
+        result_text = result[0].text.lower()
+        self.assertTrue(
+            "validation failed" in result_text
+            or "error" in result_text
+            or "missing" in result_text
+            or "required" in result_text,
+            f"Expected validation error, got: {result[0].text}",
+        )
 
     async def test_submit_config_validates_name_format(self):
         """Should reject invalid name characters"""
         args = {
-            "config_json": '{"name": "React@2024!", "description": "Test", "base_url": "https://example.com"}',
-            "github_token": "fake_token"
+            "config_json": '{"name": "React@2024!", "description": "Test", "sources": [{"type": "documentation", "base_url": "https://example.com"}]}',
+            "github_token": "fake_token",
         }
         result = await skill_seeker_server.submit_config_tool(args)
         self.assertIn("validation failed", result[0].text.lower())
@@ -649,42 +614,28 @@ class TestSubmitConfigTool(unittest.IsolatedAsyncioTestCase):
     async def test_submit_config_validates_url_format(self):
         """Should reject invalid URL format"""
         args = {
-            "config_json": '{"name": "test", "description": "Test", "base_url": "not-a-url"}',
-            "github_token": "fake_token"
+            "config_json": '{"name": "test", "description": "Test", "sources": [{"type": "documentation", "base_url": "not-a-url"}]}',
+            "github_token": "fake_token",
         }
         result = await skill_seeker_server.submit_config_tool(args)
         self.assertIn("validation failed", result[0].text.lower())
 
-    async def test_submit_config_accepts_legacy_format(self):
-        """Should accept valid legacy config"""
-        valid_config = {
+    async def test_submit_config_rejects_legacy_format(self):
+        """Should reject legacy config format (removed in v2.11.0)"""
+        legacy_config = {
             "name": "testframework",
             "description": "Test framework docs",
-            "base_url": "https://docs.test.com/",
-            "selectors": {
-                "main_content": "article",
-                "title": "h1",
-                "code_blocks": "pre code"
-            },
-            "max_pages": 100
+            "base_url": "https://docs.test.com/",  # Legacy: base_url at root level
+            "selectors": {"main_content": "article", "title": "h1", "code_blocks": "pre code"},
+            "max_pages": 100,
         }
-        args = {
-            "config_json": json.dumps(valid_config),
-            "github_token": "fake_token"
-        }
+        args = {"config_json": json.dumps(legacy_config), "github_token": "fake_token"}
 
-        # Mock GitHub API call
-        with patch('github.Github') as mock_gh:
-            mock_repo = MagicMock()
-            mock_issue = MagicMock()
-            mock_issue.html_url = "https://github.com/test/issue/1"
-            mock_issue.number = 1
-            mock_repo.create_issue.return_value = mock_issue
-            mock_gh.return_value.get_repo.return_value = mock_repo
-
-            result = await skill_seeker_server.submit_config_tool(args)
-            self.assertIn("Config submitted successfully", result[0].text)
-            self.assertIn("https://github.com", result[0].text)
+        result = await skill_seeker_server.submit_config_tool(args)
+        # Should reject with helpful error message
+        self.assertIn("❌", result[0].text)
+        self.assertIn("LEGACY CONFIG FORMAT DETECTED", result[0].text)
+        self.assertIn("sources", result[0].text)  # Should mention unified format with sources array
 
     async def test_submit_config_accepts_unified_format(self):
         """Should accept valid unified config"""
@@ -693,23 +644,13 @@ class TestSubmitConfigTool(unittest.IsolatedAsyncioTestCase):
             "description": "Test unified config",
             "merge_mode": "rule-based",
             "sources": [
-                {
-                    "type": "documentation",
-                    "base_url": "https://docs.test.com/",
-                    "max_pages": 100
-                },
-                {
-                    "type": "github",
-                    "repo": "testorg/testrepo"
-                }
-            ]
+                {"type": "documentation", "base_url": "https://docs.test.com/", "max_pages": 100},
+                {"type": "github", "repo": "testorg/testrepo"},
+            ],
         }
-        args = {
-            "config_json": json.dumps(unified_config),
-            "github_token": "fake_token"
-        }
+        args = {"config_json": json.dumps(unified_config), "github_token": "fake_token"}
 
-        with patch('github.Github') as mock_gh:
+        with patch("github.Github") as mock_gh:
             mock_repo = MagicMock()
             mock_issue = MagicMock()
             mock_issue.html_url = "https://github.com/test/issue/2"
@@ -723,21 +664,21 @@ class TestSubmitConfigTool(unittest.IsolatedAsyncioTestCase):
 
     async def test_submit_config_from_file_path(self):
         """Should accept config_path parameter"""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            json.dump({
-                "name": "testfile",
-                "description": "From file",
-                "base_url": "https://test.com/"
-            }, f)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(
+                {
+                    "name": "testfile",
+                    "description": "From file",
+                    "sources": [{"type": "documentation", "base_url": "https://test.com/"}],
+                },
+                f,
+            )
             temp_path = f.name
 
         try:
-            args = {
-                "config_path": temp_path,
-                "github_token": "fake_token"
-            }
+            args = {"config_path": temp_path, "github_token": "fake_token"}
 
-            with patch('github.Github') as mock_gh:
+            with patch("github.Github") as mock_gh:
                 mock_repo = MagicMock()
                 mock_issue = MagicMock()
                 mock_issue.html_url = "https://github.com/test/issue/3"
@@ -753,11 +694,11 @@ class TestSubmitConfigTool(unittest.IsolatedAsyncioTestCase):
     async def test_submit_config_detects_category(self):
         """Should auto-detect category from config name"""
         args = {
-            "config_json": '{"name": "react-test", "description": "React", "base_url": "https://react.dev/"}',
-            "github_token": "fake_token"
+            "config_json": '{"name": "react-test", "description": "React", "sources": [{"type": "documentation", "base_url": "https://react.dev/"}]}',
+            "github_token": "fake_token",
         }
 
-        with patch('github.Github') as mock_gh:
+        with patch("github.Github") as mock_gh:
             mock_repo = MagicMock()
             mock_issue = MagicMock()
             mock_issue.html_url = "https://github.com/test/issue/4"
@@ -770,5 +711,5 @@ class TestSubmitConfigTool(unittest.IsolatedAsyncioTestCase):
             self.assertTrue("web-frameworks" in result[0].text or "Category" in result[0].text)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

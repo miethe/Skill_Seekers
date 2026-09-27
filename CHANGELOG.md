@@ -5,9 +5,1280 @@ All notable changes to Skill Seeker will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.2.0] - 2026-03-01
+
+**Theme:** Video source support, Word document support, Pinecone adaptor, and quality improvements. 94 files changed, +23,500 lines since v3.1.3. **2,540 tests passing.**
+
+### 🎬 Video Tutorial Scraping Pipeline (BETA)
+
+Complete video tutorial extraction system that converts YouTube videos and local video files into AI-consumable skills. The pipeline extracts transcripts, performs visual OCR on code editor panels, tracks code evolution across frames, and generates structured SKILL.md output.
 
 ### Added
+
+#### Video Pipeline Core (`skill-seekers video`)
+- **`skill-seekers video --url <youtube-url>`** — New CLI command for video tutorial scraping. Also supports `--video-file` for local files and `--playlist` for YouTube playlists
+- **`skill-seekers create <youtube-url>`** — Auto-detects YouTube URLs and routes to video scraper
+- **`video_scraper.py`** (~960 lines) — Main orchestrator: metadata → transcript → segmentation → visual extraction → SKILL.md generation
+- **`video_models.py`** (~815 lines) — 20+ dataclasses: `VideoMetadata`, `TranscriptSegment`, `VideoChapter`, `KeyframeData`, `FrameSubSection`, `TextBlock`, `CodeTimeline`, `SetupModules`, etc.
+- **`video_metadata.py`** (~270 lines) — YouTube metadata extraction (title, channel, views, chapters, duration) via yt-dlp; local file metadata via ffprobe
+- **`video_transcript.py`** (~370 lines) — Multi-source transcript extraction with 3-tier fallback: YouTube Transcript API → yt-dlp subtitles → faster-whisper local transcription
+- **`video_segmenter.py`** (~220 lines) — Chapter-based and time-window segmentation with configurable overlap
+- **`video_visual.py`** (~2,410 lines) — Visual extraction pipeline:
+  - Keyframe detection via scene change (scenedetect) with configurable threshold
+  - Frame classification (code editor, slides, terminal, browser, other)
+  - Panel detection — splits IDE screenshots into independent sub-sections (code, terminal, file tree)
+  - **Per-panel OCR** — Each detected panel OCR'd independently with its own bounding box
+  - **Multi-engine OCR ensemble** — EasyOCR + pytesseract for code frames (per-line confidence merge with code-token preference), EasyOCR only for non-code frames
+  - **Parallel OCR** — `ThreadPoolExecutor` for multi-panel frames
+  - Narrow panel filtering (300px min width) to skip UI chrome
+  - Text block tracking with spatial panel position matching across frames
+  - Code timeline with edit tracking (additions, modifications, deletions)
+  - Vision API fallback when OCR confidence < 0.5
+  - Tesseract circuit breaker (`_tesseract_broken` flag) — disables pytesseract after first failure
+- **Audio-visual alignment** — Code blocks paired with narrator transcript for context
+- **Video-specific AI enhancement** — Custom prompt for OCR denoising, code reconstruction, and tutorial narrative synthesis
+- **Two-pass AI enhancement** — Pass 1 cleans reference files (Code Timeline reconstruction from transcript context), Pass 2 generates SKILL.md from cleaned references
+- **`_ai_clean_reference()`** — Sends reference file to Claude to reconstruct code blocks using transcript context, fixing OCR noise before SKILL.md generation
+- **`video-tutorial.yaml`** workflow preset — 4-stage enhancement pipeline (OCR cleanup → language detection → tutorial synthesis → skill polish)
+- **Video arguments** — `arguments/video.py` with `VIDEO_ARGUMENTS` dict: `--url`, `--video-file`, `--playlist`, `--vision-ocr`, `--keyframe-threshold`, `--max-keyframes`, `--whisper-model`, `--setup`, etc.
+- **Video parser** — `parsers/video_parser.py` for unified CLI parser registry
+- **MCP `scrape_video` tool** — Full video scraping from MCP server with 6 visual params, setup mode, and playlist support
+- **`tests/test_video_scraper.py`** (197 tests) — Comprehensive coverage: models, metadata, transcript, segmenter, visual extraction, OCR, panel detection, scraper integration, CLI arguments, OCR cleaning, code filtering
+
+#### Video `--setup`: GPU Auto-Detection & Dependency Installation
+- **`skill-seekers video --setup`** — One-command GPU auto-detection and dependency installation
+  - `video_setup.py` (~835 lines) — Complete setup orchestration module
+  - **GPU auto-detection** — Detects NVIDIA (nvidia-smi → CUDA version), AMD (rocminfo → ROCm version), or CPU-only without requiring PyTorch
+  - **Correct PyTorch variant** — Installs from the right index URL: `cu124`/`cu121`/`cu118` for NVIDIA, `rocm6.3`/`rocm6.2.4` for AMD, `cpu` for CPU-only
+  - **ROCm configuration** — Sets `MIOPEN_FIND_MODE=FAST` and `HSA_OVERRIDE_GFX_VERSION` for AMD GPUs
+  - **Virtual environment detection** — Warns users outside a venv with opt-in `--force` override
+  - **System dependency checks** — Validates `tesseract` and `ffmpeg` binaries, provides OS-specific install instructions
+  - **Module selection** — `SetupModules` dataclass for optional component selection (easyocr, opencv, tesseract, scenedetect, whisper)
+  - **Base video deps always included** — `yt-dlp` and `youtube-transcript-api` installed automatically
+  - **Verification step** — Post-install import checks including `torch.cuda.is_available()` and `torch.version.hip`
+  - **Non-interactive mode** — `run_setup(interactive=False)` for MCP server and CI/CD use
+- **`--setup` early-exit** — Runs before source validation (no `--url` required)
+- **MCP `scrape_video` setup parameter** — `setup: bool = False` in `server_fastmcp.py` and `scraping_tools.py`
+- **`create` command routing** — Forwards `--setup` to video scraper
+- **`tests/test_video_setup.py`** (60 tests) — GPU detection, CUDA/ROCm version mapping, installation, verification, venv checks, system deps, module selection
+
+#### Microsoft Word (.docx) Support
+- **`skill-seekers word --docx <file>`** and `skill-seekers create document.docx` — Full pipeline: mammoth → HTML → BeautifulSoup → sections → SKILL.md + references/
+  - `word_scraper.py` — `WordToSkillConverter` class (~600 lines) with heading/code/table/image/metadata extraction
+  - `arguments/word.py` — `add_word_arguments()` + `WORD_ARGUMENTS` dict
+  - `parsers/word_parser.py` — WordParser for unified CLI parser registry
+  - `tests/test_word_scraper.py` — Comprehensive test suite (~300 lines)
+- **`.docx` auto-detection** in `source_detector.py` — Routes to word scraper
+- **`--help-word`** flag in create command for Word-specific help
+- **Word support in unified scraper** — `_scrape_word()` method for multi-source scraping
+- **`skill-seekers-word`** entry point in pyproject.toml
+- **`docx` optional dependency group** — `pip install skill-seekers[docx]` (mammoth + python-docx)
+
+#### Other Additions
+- **Pinecone adaptor** — `pinecone_adaptor.py` with full upload support
+- **`video` and `video-full` optional dependency groups** in pyproject.toml
+- **`skill-seekers-video`** entry point in pyproject.toml
+- **Video plan documents** — 8 design documents in `docs/plans/video/` (research, data models, pipeline, integration, output, testing, dependencies, overview)
+
+### Fixed
+
+#### Video Pipeline OCR Quality Fixes (6)
+- **Webcam/OTHER frames skip OCR** — WEBCAM and OTHER frame types no longer get OCR'd, eliminating ~64 junk OCR results per video
+- **`_clean_ocr_line()` helper** — Strips leading line numbers, IDE tab bar text, Unity Inspector labels, and VS Code collapse markers from OCR output
+- **`_fix_intra_line_duplication()`** — Detects and removes token sequence repetition from multi-engine OCR overlap (e.g., `gpublic class Card Jpublic class Card` → `public class Card`)
+- **`_is_likely_code()` filter** — Reference file code fences now filtered to reject UI junk (Inspector, Hierarchy, Canvas labels) that passed frame classification
+- **Language detection on text groups** — `get_text_groups()` now runs `LanguageDetector.detect_from_code()` on each group, filling the previously-always-None `detected_language` field
+- **OCR cleaning in text assembly** — `_assemble_structured_text()` applies `_clean_ocr_line()` to every line before joining
+
+#### Video Pipeline Fixes (15)
+- **`extract_visual_data` returning 2-tuple instead of 3** — Caused `ValueError` crash when unpacking results
+- **pytesseract in core deps** — Moved from core dependencies to `[video-full]` optional group
+- **30-min timeout for video enhancement subprocess** — Previously could hang indefinitely
+- **`scrape_video_impl` missing from MCP server fallback import** — Added to import block
+- **Auto-generated YouTube captions not detected** — Now checks `is_generated` property on transcripts
+- **`--vision-ocr` and `--video-playlist` not forwarded** — `create` command now passes these to video scraper
+- **Filename collision for non-ASCII video titles** — Falls back to `video_id` when title contains non-ASCII characters
+- **`_vision_used` not a proper dataclass field** — Made a proper field on `FrameSubSection` dataclass
+- **6 visual params missing from MCP `scrape_video`** — Exposed keyframe_threshold, max_keyframes, whisper_model, vision_ocr, video_playlist, video_file
+- **Missing video dep install instructions in unified scraper** — Added guidance when video dependencies are not installed
+- **MCP docstring tool counts outdated** — Updated from 25→33 tools across 7 categories
+- **Video and word commands missing from `main.py` docstring** — Added to CLI help text
+- **`video-full` exclusion from `[all]` deps undocumented** — Added comment in pyproject.toml
+- **Parser registry test count wrong** — Updated expected count from 22→23 for video parser
+
+#### Scraper & Quality Fixes
+- **Issue #300: Selector fallback & dry-run link discovery** — `create https://reactflow.dev/` now finds 20+ pages (was 1):
+  - `extract_content()` extracted links after early-return → moved before
+  - Dry-run used `main.find_all("a")` instead of `soup.find_all("a")` → fixed
+  - Async dry-run had no link extraction at all → added
+  - `get_configuration()` CSS comma selector conflicted with fallback loop → removed default
+  - `create --config` with `base_url` config incorrectly routed to unified_scraper → now peeks at JSON
+  - Selector fallback duplicated in 3 places with `body` fallback → extracted `FALLBACK_MAIN_SELECTORS` constant + `_find_main_content()` helper
+- **Issue #301: `setup.sh` fails on macOS** — `pip3` pointed to different Python than `python3`. Changed to `python3 -m pip`.
+- **RAG chunking crash (`AttributeError: output_dir`)** — `converter.output_dir` doesn't exist on `DocToSkillConverter`. Changed to `Path(converter.skill_dir)`.
+- **`--var` flag silently dropped in `create` routing** — `main.py` read `args.workflow_var` instead of `args.var`
+- **`--chunk-overlap-tokens` missing from `package` command** — Wired through entire pipeline: `package_skill()` → `adaptor.package()` → `format_skill_md()` → `_maybe_chunk_content()` → `RAGChunker`
+- **Chunk overlap auto-scaling** — Auto-scales to `max(50, chunk_tokens // 10)` when chunk size is non-default
+- **Weaviate `ImportError` masked by generic handler** — Added `except ImportError` before `except Exception`
+- **Hardcoded chunk defaults in 12 adaptors** — Replaced `512`/`50` with `DEFAULT_CHUNK_TOKENS`/`DEFAULT_CHUNK_OVERLAP_TOKENS` constants
+- **Reference file code truncation** — `codebase_scraper.py` no longer truncates code blocks to 500 chars (5 locations)
+- **Enhancement code block limit** — `summarize_reference()` now uses character-budget approach instead of `[:5]` cap
+- **Intro boundary code block desync** — Tracks code block state to prevent splitting inside code blocks
+- **Hardcoded `python` language** — `unified_skill_builder.py` and `how_to_guide_builder.py` now use detected language
+- **GitHub reference file limits removed** — No more caps on issues (was 20), releases (was 10), or release bodies (was 500 chars)
+- **GitHub scraper reference limits removed** — `github_scraper.py` no longer caps open_issues at 20 or closed_issues at 10
+- **PDF scraper fixes** — Real API/LOCAL enhancement (was stub); removed `[:3]` reference file limit
+- **Word scraper code detection** — Detect mammoth monospace `<p><br>` blocks as code
+- **Language detector method** — Fixed `detect_from_text` → `detect_from_code` in word scraper
+- **`.docx` file extension validation** — Non-`.docx` files raise `ValueError` with clear message
+- **Double `_score_code_quality()` call** — Consolidated to single call in word scraper
+- **`--no-preserve-code` renamed** — Now `--no-preserve-code-blocks` (backward-compat alias kept)
+- **Dead variable** — Removed unused `_target_lines` in `enhance_skill_local.py`
+
+### Changed
+- **`easyocr` removed from `video-full` optional deps** — Was pulling ~2GB of NVIDIA CUDA packages regardless of GPU vendor. Now installed via `--setup` with correct PyTorch variant.
+- **Video dependency error messages** — `video_scraper.py` and `video_visual.py` now suggest `skill-seekers video --setup` as primary fix
+- **Shared embedding methods consolidated** — `_generate_openai_embeddings()` and `_generate_st_embeddings()` moved to `SkillAdaptor` base class, eliminating ~150 lines of duplication from chroma/weaviate/pinecone adaptors
+- **Chunk constants centralized** — `DEFAULT_CHUNK_TOKENS = 512` and `DEFAULT_CHUNK_OVERLAP_TOKENS = 50` in `arguments/common.py`, used across all 12 adaptors + rag_chunker + base + package_skill + create_command
+- **Enhancement summarizer architecture** — Character-budget approach with `target_ratio` for both code blocks and heading chunks
+
+## [3.1.3] - 2026-02-24
+
+### 🐛 Hotfix — Explicit Chunk Flags & Argument Pipeline Cleanup
+
+### Fixed
+- **Issue #299: `skill-seekers package --target claude` unrecognised argument crash** — `_reconstruct_argv()` in `main.py` emits default flag values back into argv when routing subcommands. `package_skill.py` had a 105-line inline argparser that used different flag names to those in `arguments/package.py`, so forwarded flags were rejected. Fixed by replacing the inline block with a call to `add_package_arguments(parser)` — the single source of truth.
+
+### Changed
+- **`package_skill.py` argparser refactored** — Replaced ~105 lines of inline argparse duplication with a single `add_package_arguments(parser)` call. Flag names are now guaranteed consistent with `_reconstruct_argv()` output, preventing future argument-name drift.
+- **Explicit chunk flag names** — All `--chunk-*` flags now include unit suffixes to eliminate ambiguity between RAG tokens and streaming characters:
+  - `--chunk-size` (RAG tokens) → `--chunk-tokens`
+  - `--chunk-overlap` (RAG tokens) → `--chunk-overlap-tokens`
+  - `--chunk` (enable RAG chunking) → `--chunk-for-rag`
+  - `--streaming-chunk-size` (chars) → `--streaming-chunk-chars`
+  - `--streaming-overlap` (chars) → `--streaming-overlap-chars`
+  - `--chunk-size` in PDF extractor (pages) → `--pdf-pages-per-chunk`
+- **`setup_logging()` centralized** — Added `setup_logging(verbose, quiet)` to `utils.py` and removed 4 duplicate module-level `logging.basicConfig()` calls from `doc_scraper.py`, `github_scraper.py`, `codebase_scraper.py`, and `unified_scraper.py`
+
+## [3.1.2] - 2026-02-24
+
+### 🔧 Fix `create` Command Argument Forwarding, Gemini Model, and Enhance Dispatcher
+
+### Fixed
+- **`create` command argument forwarding** — Universal flags (`--dry-run`, `--verbose`, `--quiet`, `--name`, `--description`) now work correctly across all source types. Previously, `create <url> -p quick --dry-run`, `create owner/repo --dry-run`, and `create ./path --dry-run` would crash because sub-scrapers didn't accept those flags
+- **`skill-seekers analyze --dry-run`** — Fixed `_handle_analyze_command()` in `main.py` not forwarding `--dry-run`, `--preset`, `--quiet`, `--name`, `--description`, `--api-key`, and workflow flags to codebase_scraper
+- **Gemini model 404 errors** — Replaced retired `gemini-2.0-flash-exp` with `gemini-2.5-flash` (stable GA) in the Gemini adaptor. Users attempting Gemini enhancement were getting 404 Not Found errors
+- **`skill-seekers enhance` auto-detection** — The documented behaviour of auto-detecting API vs LOCAL mode was never implemented. `enhance` now correctly routes to the platform API when a key is present: `ANTHROPIC_API_KEY` → Claude API, `GOOGLE_API_KEY` → Gemini API, `OPENAI_API_KEY` → OpenAI API, no key → LOCAL mode (Claude Code Max, free). Use `--mode LOCAL` to force local mode regardless
+
+### Added
+- **Shared argument contract** — New `add_all_standard_arguments(parser)` in `arguments/common.py` registers common + behavior + workflow args on any parser as a single call
+- **`BEHAVIOR_ARGUMENTS`** — Centralized `--dry-run`, `--verbose`, `--quiet` definitions in `arguments/common.py`
+- **`--dry-run` for GitHub scraper** — `skill-seekers github --repo owner/repo --dry-run` now previews the operation
+- **`--dry-run` for PDF scraper** — `skill-seekers pdf --name test --dry-run` now previews the operation
+- **`--verbose`/`--quiet` for GitHub and PDF scrapers** — Logging level control now works consistently across all scrapers
+- **`--name`/`--description` for codebase analyzer** — Custom skill name and description can now be passed to `skill-seekers analyze`
+- **`--mode LOCAL` flag for `skill-seekers enhance`** — Explicitly forces LOCAL mode even when API keys are present
+
+### Changed
+- **Argument deduplication** — Removed duplicated argument definitions from `arguments/github.py`, `arguments/scrape.py`, `arguments/analyze.py`, `arguments/pdf.py`; all now import shared args from `arguments/common.py`
+- **`create` command `_add_common_args()`** — Only forwards truly universal flags; route-specific flags (`--preset`, `--config`, `--chunk-for-rag`, etc.) moved to their respective route methods
+- **`codebase_scraper.py` argparser** — Replaced ~190 lines of inline argparser with `add_analyze_arguments(parser)` call
+
+## [3.1.1] - 2026-02-23
+
+### 🐛 Hotfix
+
+### Fixed
+- **`create` command `max_pages` AttributeError** — Fixed crash when `max_pages` argument was not provided in web source routing. Uses `getattr()` for safe attribute access (#293, #294)
+
+### Changed
+- Version bump to 3.1.1
+
+## [3.1.0] - 2026-02-23
+
+### 🎯 "Unified CLI & Developer Experience" — Feature Release
+
+**Theme:** One command for everything. Better developer tooling. 2280+ tests passing.
+
+### Added
+
+#### Unified `create` Command
+- **Single command for all source types** — auto-detects URL, GitHub repo (`owner/repo`), local directory, PDF file, or multi-source config JSON
+  ```bash
+  skill-seekers create https://docs.react.dev/
+  skill-seekers create facebook/react
+  skill-seekers create ./my-project
+  skill-seekers create tutorial.pdf
+  ```
+- **Progressive help disclosure** — default `--help` shows 13 universal flags; detailed help per source:
+  - `--help-web`, `--help-github`, `--help-local`, `--help-pdf`, `--help-advanced`, `--help-all`
+- **`-p` shortcut** for preset selection: `skill-seekers create <source> -p quick|standard|comprehensive`
+- **`--local-repo-path`** flag for specifying local clone path in create command with validation
+- Supports multi-source config files as input (routes to unified scraper)
+
+#### Enhancement Workflow Preset System
+- **New `workflows` CLI subcommand** to manage enhancement workflow presets
+- **65 bundled workflow presets** shipped as YAML files in `skill_seekers/workflows/`:
+  - Core: `default`, `minimal`, `security-focus`, `architecture-comprehensive`, `api-documentation`
+  - Domain-specific: `rest-api-design`, `graphql-schema`, `grpc-services`, `websockets-realtime`, `event-driven`, `message-queues`, `stream-processing`
+  - Architecture: `microservices-patterns`, `serverless-architecture`, `kubernetes-deployment`, `devops-deployment`, `terraform-guide`
+  - Frontend: `responsive-design`, `component-library`, `forms-validation`, `design-system`, `pwa-checklist`, `ssr-guide`, `deep-linking`, `state-management`
+  - Quality: `testing-focus`, `testing-frontend`, `performance-optimization`, `observability-stack`, `troubleshooting-guide`, `accessibility-a11y`
+  - Data: `database-schema`, `data-validation`, `feature-engineering`, `vector-databases`, `mlops-pipeline`, `model-deployment`, `computer-vision`
+  - Security: `encryption-guide`, `iam-identity`, `secrets-management`, `compliance-gdpr`, `auth-strategies`
+  - Cloud: `aws-services`, `backup-disaster-recovery`
+  - Patterns: `advanced-patterns`, `api-evolution`, `migration-guide`, `contribution-guide`, `onboarding-beginner`, `comparison-matrix`, `sdk-integration`, `platform-specific`, `cli-tooling`, `build-tools`
+  - Mobile: `push-notifications`, `offline-first`, `localization-i18n`
+  - Background: `background-jobs`, `rate-limiting`, `caching-strategies`, `webhook-guide`, `api-gateway`
+- User presets stored in `~/.config/skill-seekers/workflows/`
+- Subcommands:
+  - `skill-seekers workflows list` — List all bundled + user workflows with descriptions
+  - `skill-seekers workflows show <name>` — Print YAML content of a workflow
+  - `skill-seekers workflows copy <name> [name ...]` — Copy bundled workflow(s) to user dir
+  - `skill-seekers workflows add <file.yaml> [file ...]` — Install custom YAML file(s) into user dir
+  - `skill-seekers workflows remove <name> [name ...]` — Delete user workflow(s)
+  - `skill-seekers workflows validate <name|path>` — Parse and validate a workflow
+- `copy`, `add`, `remove` all accept multiple names/files in one command (partial-failure: continues processing, returns non-zero if any item fails)
+- New entry point: `skill-seekers-workflows`
+
+#### Multiple `--enhance-workflow` Flags from CLI
+- Chain workflows in a single command: `skill-seekers create <source> --enhance-workflow security-focus --enhance-workflow minimal`
+- Supported across all scrapers: `scrape`, `github`, `analyze`, `pdf`, `unified`
+
+#### Smart Enhancement Dispatcher (`skill-seekers enhance`)
+- Auto-routes to API mode (Claude/Gemini/OpenAI) when API key is available, LOCAL mode (Claude Code CLI) otherwise
+- Decision priority: `--target` flag → config `default_agent` → env vars (`ANTHROPIC_API_KEY` → claude, `GOOGLE_API_KEY` → gemini, `OPENAI_API_KEY` → openai) → LOCAL fallback
+- **Blocks LOCAL mode when running as root** (Docker/VPS) with clear error message + API mode instructions (fixes #286, #289)
+- New flags: `--target`, `--api-key`, `--dry-run`, `--interactive-enhancement`
+
+#### Unified Document Parser System
+- New `parsers/extractors.py` module with `RstParser`, `MarkdownParser` classes
+- **ReStructuredText (RST) support** — parses class references, code blocks, tables, cross-references
+- Shared `parse_document()` factory function for RST/Markdown/PDF input
+- Integrated into documentation extraction pipeline for richer content
+- `ContentBlockType` and `CrossRefType` enums for structured parsing output
+
+#### Local Source Support in Unified Scraper
+- `"type": "local"` source type in unified config JSONs — analyze local codebases alongside web/GitHub/PDF sources
+- `--local-repo-path` CLI flag in unified scraper for per-source path override
+
+#### CLI Flag Parity Across All Commands
+- `analyze`, `pdf`, and `unified` commands now have full flag parity with `scrape`/`github`:
+  - `--api-key` on `pdf` and `unified`
+  - `--enhance-level` on `unified`
+  - `--dry-run` on `analyze`
+  - All workflow flags (`--enhance-workflow`, `--enhance-stage`, `--var`, `--workflow-dry-run`) on `analyze`
+- Workflow JSON config fields (`workflows`, `workflow_stages`, `workflow_vars`) now merged with CLI flags in `unified` scraper
+
+### Fixed
+- **Percent-encode brackets in llms.txt URLs** — prevent "Invalid IPv6 URL" errors when scraping sites with bracket characters (fixes #284)
+- **Platform-appropriate config paths on Windows** — use `%APPDATA%` instead of `~/.config` (fixes #283)
+- **`create` command multi-source config** — now correctly routes to unified scraper when input is a `.json` config file
+- **`create` command `_add_common_args()`** — correctly forwards each `--enhance-workflow` value as a separate flag to sub-scrapers (previously collapsed list to single string, causing workflows to be ignored)
+- **`_extract_markdown_content`** — filter out bare `h1` headings and short stub paragraphs that polluted extracted content
+- **Godot unified config language names** — corrected `gdscript`/`gds` to proper names in `godot_unified.json`
+- **Python 3.10 type union compatibility** — use `Optional[X]` instead of `X | None` in forward-reference positions
+- **`_route_config` in unified scraper** — correctly handles all source types when routing config-driven scraping
+- **CONFIG_ARGUMENTS** — added to ensure unified CLI has full argument visibility for config-based sources
+- **Test suite isolation** — `test_swift_detection.py` now saves/restores `sys.modules` and parent package attributes; prevents `@patch` decorators in downstream files from targeting stale module objects
+- **Python 3.14 chromadb compatibility** — catch `pydantic.v1.errors.ConfigError` (not just `ImportError`) when chromadb is installed
+- **langchain import path** — updated `langchain.schema` → `langchain_core.documents` for langchain 1.x
+- **Removed legacy `sys.path.insert()` calls** from `codebase_scraper.py`, `doc_scraper.py`, `enhance_skill.py`, `enhance_skill_local.py`, `estimate_pages.py`, `install_skill.py` (unnecessary with `pip install -e .`)
+- **Benchmark timing threshold** — relaxed metadata overhead assertion from 10% to 50% for CI runner variability
+
+### Changed
+- **Enhancement flags consolidated** — `--enhance-level` (0-3) replaces three separate flags (`--enhance`, `--enhance-local`, `--api-key`). Old flags still accepted with deprecation warnings until v4.0.0
+- **`workflows copy/add/remove`** now accept multiple names/files in one invocation
+- **`pyproject.toml`** — PyYAML added as core dependency (required by workflow preset management); langchain and llama-index added as dependencies; MCP version requirement updated to `>=1.25`
+
+### Tests
+- **2280+ tests passing** (2158 non-MCP + ~122 MCP, up from 1852 in v3.0.0), 11 skipped (external services), 0 failures
+- Added `TestAnalyzeWorkflowFlags`, `TestUnifiedCLIArguments`, `TestPDFCLIArguments` classes
+- Added `tests/test_mcp_workflow_tools.py` — 5 MCP workflow tool tests
+- Added `tests/test_unified_scraper_orchestration.py` — UnifiedScraper orchestration tests
+- Removed `@unittest.skip` from gemini/openai/claude adaptor tests that were ready
+- Removed `@requires_github` from 5 unified_analyzer tests that fully mock their dependencies
+- Macros-specific tests now use `@patch(sys.platform)` instead of runtime `skipTest()` for platform portability
+
+### Config Repository (skill-seekers-configs)
+- **178 production configs reviewed and enhanced** across all 22 categories — brought to v1.1.0 quality standard
+- **Removed all `max_pages` fields** from production configs (deprecated, defaults apply automatically)
+- **Fixed outdated URLs**: `astro.json` (Astro v3 restructure: `/en/core-concepts/` → `/en/basics/`), `laravel.json` (11.x → 12.x throughout)
+- **Fixed structural bug** in `httpx_comprehensive.json` — `url_patterns`, `categories`, `rate_limit` moved from top-level into `sources[0]` (required for unified format)
+- **Removed hash-fragment start_urls** from `zod.json` (scrapers don't follow `?id=` anchors)
+- **Improved category/selector quality** across all 22 categories: 5-13 categories per config, 3-6 keywords each, semantic selector fallback chains
+- **README.md**: corrected config count from outdated "50+" to accurate 178 production / 182 total; all category counts verified
+- **CONTRIBUTING.md, QUALITY_GUIDELINES.md, AGENTS.md**: aligned with production standards; removed all `max_pages` guidance
+- **`scripts/validate-config.py`**: fixed two bugs — unified config categories lookup (was always reporting "no categories" for multi-source configs) and `max_pages` warning logic (was warning when absent, now correctly warns when present)
+- **Deleted** `.github/ISSUE_TEMPLATE/submit-config.md` (old duplicate of `submit-config.yml` with outdated content)
+
+## [3.0.0] - 2026-02-10
+
+### 🚀 "Universal Intelligence Platform" - Major Release
+
+**Theme:** Transform any documentation into structured knowledge for any AI system.
+
+This is our biggest release ever! v3.0.0 establishes Skill Seekers as the **universal documentation preprocessor** for the entire AI ecosystem - from RAG pipelines to AI coding assistants to Claude skills.
+
+### Highlights
+
+- 🚀 **16 platform adaptors** (up from 4 in v2.x)
+- 🛠️ **26 MCP tools** (up from 9)
+- ✅ **1,852 tests** passing (up from 700+)
+- ☁️ **Cloud storage** support (S3, GCS, Azure)
+- 🔄 **CI/CD ready** (GitHub Action + Docker)
+- 📦 **12 example projects** for every integration
+- 📚 **18 integration guides** complete
+
+### Added - Platform Adaptors (16 Total)
+
+#### RAG & Vector Databases (8)
+- **LangChain** (`--format langchain`) - Output LangChain Document objects
+- **LlamaIndex** (`--format llama-index`) - Output LlamaIndex TextNode objects
+- **Chroma** (`--format chroma`) - Direct ChromaDB integration
+- **FAISS** (`--format faiss`) - Facebook AI Similarity Search
+- **Haystack** (`--format haystack`) - Deepset Haystack pipelines
+- **Qdrant** (`--format qdrant`) - Qdrant vector database
+- **Weaviate** (`--format weaviate`) - Weaviate vector search
+- **Pinecone-ready** (`--target markdown`) - Markdown format ready for Pinecone
+
+#### AI Platforms (3)
+- **Claude** (`--target claude`) - Claude AI skills (ZIP + YAML)
+- **Gemini** (`--target gemini`) - Google Gemini skills (tar.gz)
+- **OpenAI** (`--target openai`) - OpenAI ChatGPT (ZIP + Vector Store)
+
+#### AI Coding Assistants (4)
+- **Cursor** (`--target claude` + `.cursorrules`) - Cursor IDE integration
+- **Windsurf** (`--target claude` + `.windsurfrules`) - Windsurf/Codeium
+- **Cline** (`--target claude` + `.clinerules`) - VS Code extension
+- **Continue.dev** (`--target claude`) - Universal IDE support
+
+#### Generic (1)
+- **Markdown** (`--target markdown`) - Generic ZIP export
+
+### Added - MCP Tools (26 Total)
+
+#### Config Tools (3)
+- `generate_config` - Generate scraping configuration
+- `list_configs` - List available preset configs
+- `validate_config` - Validate config JSON structure
+
+#### Scraping Tools (8)
+- `estimate_pages` - Estimate page count before scraping
+- `scrape_docs` - Scrape documentation websites
+- `scrape_github` - Scrape GitHub repositories
+- `scrape_pdf` - Extract from PDF files
+- `scrape_codebase` - Analyze local codebases
+- `detect_patterns` - Detect design patterns in code
+- `extract_test_examples` - Extract usage examples from tests
+- `build_how_to_guides` - Build how-to guides from code
+
+#### Packaging Tools (4)
+- `package_skill` - Package skill for target platform
+- `upload_skill` - Upload to LLM platform
+- `enhance_skill` - AI-powered enhancement
+- `install_skill` - One-command complete workflow
+
+#### Source Tools (5)
+- `fetch_config` - Fetch config from remote source
+- `submit_config` - Submit config for approval
+- `add_config_source` - Add Git config source
+- `list_config_sources` - List config sources
+- `remove_config_source` - Remove config source
+
+#### Splitting Tools (2)
+- `split_config` - Split large configs
+- `generate_router` - Generate router skills
+
+#### Vector DB Tools (4)
+- `export_to_weaviate` - Export to Weaviate
+- `export_to_chroma` - Export to ChromaDB
+- `export_to_faiss` - Export to FAISS
+- `export_to_qdrant` - Export to Qdrant
+
+### Added - Cloud Storage
+
+Upload skills directly to cloud storage:
+
+- **AWS S3** - `skill-seekers cloud upload --provider s3 --bucket my-bucket`
+- **Google Cloud Storage** - `skill-seekers cloud upload --provider gcs --bucket my-bucket`
+- **Azure Blob Storage** - `skill-seekers cloud upload --provider azure --container my-container`
+
+Features:
+- Upload/download directories
+- List files with metadata
+- Check file existence
+- Generate presigned URLs
+- Cloud-agnostic interface
+
+### Added - CI/CD Support
+
+#### GitHub Action
+```yaml
+- uses: skill-seekers/action@v1
+  with:
+    config: configs/react.json
+    format: langchain
+```
+
+Features:
+- Auto-update on doc changes
+- Matrix builds for multiple frameworks
+- Scheduled updates
+- Caching for faster runs
+
+#### Docker
+```bash
+docker run -v $(pwd):/data skill-seekers:latest scrape --config /data/config.json
+```
+
+### Added - Production Infrastructure
+
+- **Helm Charts** - Kubernetes deployment
+- **Docker Compose** - Local vector DB stack
+- **Monitoring** - Sentry integration, sync monitoring
+- **Benchmarking** - Performance testing framework
+
+### Added - 12 Example Projects
+
+Complete working examples for every integration:
+
+1. **langchain-rag-pipeline** - React docs → LangChain → Chroma
+2. **llama-index-query-engine** - Vue docs → LlamaIndex
+3. **pinecone-upsert** - Documentation → Pinecone
+4. **chroma-example** - Full ChromaDB workflow
+5. **faiss-example** - FAISS index building
+6. **haystack-pipeline** - Haystack RAG pipeline
+7. **qdrant-example** - Qdrant vector DB
+8. **weaviate-example** - Weaviate integration
+9. **cursor-react-skill** - React skill for Cursor
+10. **windsurf-fastapi-context** - FastAPI for Windsurf
+11. **cline-django-assistant** - Django assistant for Cline
+12. **continue-dev-universal** - Universal IDE context
+
+### Quality Metrics
+
+- ✅ **1,852 tests** across 100 test files
+- ✅ **58,512 lines** of Python code
+- ✅ **80+ documentation** files
+- ✅ **100% test coverage** for critical paths
+- ✅ **CI/CD** on every commit
+
+### Fixed
+
+#### URL Conversion Bug with Anchor Fragments (Issue #277)
+- **Critical Bug Fix**: Fixed 404 errors when scraping documentation with anchor links
+  - **Problem**: URLs with anchor fragments (e.g., `#synchronous-initialization`) were malformed
+    - Incorrect: `https://example.com/docs/api#method/index.html.md` ❌
+    - Correct: `https://example.com/docs/api/index.html.md` ✅
+  - **Root Cause**: `_convert_to_md_urls()` didn't strip anchor fragments before appending `/index.html.md`
+  - **Solution**: Parse URLs with `urllib.parse` to remove fragments and deduplicate base URLs
+  - **Impact**: Prevents duplicate requests for the same page with different anchors
+  - **Additional Fix**: Changed `.md` detection from `".md" in url` to `url.endswith('.md')`
+    - Prevents false matches on URLs like `/cmd-line` or `/AMD-processors`
+- **Test Coverage**: 12 comprehensive tests covering all edge cases
+  - Anchor fragment stripping
+  - Deduplication of multiple anchors on same URL
+  - Query parameter preservation
+  - Trailing slash handling
+  - Real-world MikroORM case validation
+  - 54/54 tests passing (42 existing + 12 new)
+- **Reported by**: @devjones via Issue #277
+
+### Added
+
+#### Extended Language Detection (NEW)
+- **7 New Programming Languages**: Dart, Scala, SCSS, SASS, Elixir, Lua, Perl
+  - Pattern-based detection with confidence scoring (0.6-0.8+ thresholds)
+  - **70 regex patterns** prioritizing unique identifiers (weight 5)
+  - Framework-specific patterns:
+    - **Dart**: Flutter widgets (`StatelessWidget`, `StatefulWidget`, `Widget build()`)
+    - **Scala**: Pattern matching (`case class`, `trait`, `match {}`)
+    - **SCSS**: Preprocessor features (`$variables`, `@mixin`, `@include`, `@extend`)
+    - **SASS**: Indented syntax (`=mixin`, `+include`, `$variables`)
+    - **Elixir**: Functional patterns (`defmodule`, `def ... do`, pipe operator `|>`)
+    - **Lua**: Game scripting (`local`, `repeat...until`, `~=`, `elseif`)
+    - **Perl**: Text processing (`my $`, `use strict`, `sub`, `chomp`, regex `=~`)
+  - **Comprehensive test coverage**: 7 new tests, 30/30 passing (100%)
+  - **False positive prevention**: Unique identifiers (weight 5) + confidence thresholds
+  - **No regressions**: All existing language detection tests still pass
+  - **Total language support**: Now 27+ programming languages
+  - **Credit**: Contributed by @PaawanBarach via PR #275
+
+#### Multi-Agent Support for Local Enhancement (NEW)
+- **Multiple Coding Agent Support**: Choose your preferred local coding agent for SKILL.md enhancement
+  - **Claude Code** (default): Claude Code CLI with `--dangerously-skip-permissions`
+  - **Codex CLI**: OpenAI Codex CLI with `--full-auto` and `--skip-git-repo-check`
+  - **Copilot CLI**: GitHub Copilot CLI (`gh copilot chat`)
+  - **OpenCode CLI**: OpenCode CLI
+  - **Custom agents**: Use any CLI tool with `--agent custom --agent-cmd "command {prompt_file}"`
+- **CLI Arguments**: New flags for agent selection
+  - `--agent`: Choose agent (claude, codex, copilot, opencode, custom)
+  - `--agent-cmd`: Override command template for custom agents
+- **Environment Variables**: CI/CD friendly configuration
+  - `SKILL_SEEKER_AGENT`: Default agent to use
+  - `SKILL_SEEKER_AGENT_CMD`: Default command template for custom agents
+- **Security First**: Custom command validation
+  - Blocks dangerous shell characters (`;`, `&`, `|`, `$`, `` ` ``, `\n`, `\r`)
+  - Validates executable exists in PATH
+  - Safe parsing with `shlex.split()`
+- **Dual Input Modes**: Supports both file-based and stdin-based agents
+  - File-based: Uses `{prompt_file}` placeholder (Claude, custom agents)
+  - Stdin-based: Pipes prompt via stdin (Codex CLI)
+- **Backward Compatible**: Claude Code remains the default, no breaking changes
+- **Comprehensive Tests**: 13 new tests covering all agent types and security validation
+- **Agent Normalization**: Smart alias handling (e.g., "claude-code" → "claude")
+- **Credit**: Contributed by @rovo79 (Robert Dean) via PR #270
+
+#### C3.10: Signal Flow Analysis for Godot Projects (NEW)
+- **Complete Signal Flow Analysis System**: Analyze event-driven architectures in Godot game projects
+  - Signal declaration extraction (`signal` keyword detection)
+  - Connection mapping (`.connect()` calls with targets and methods)
+  - Emission tracking (`.emit()` and `emit_signal()` calls)
+  - **208 signals**, **634 connections**, and **298 emissions** detected in test project (Cosmic Idler)
+  - Signal density metrics (signals per file)
+  - Event chain detection (signals triggering other signals)
+  - Output: `signal_flow.json`, `signal_flow.mmd` (Mermaid diagram), `signal_reference.md`
+
+- **Signal Pattern Detection**: Three major patterns identified
+  - **EventBus Pattern** (0.90 confidence): Centralized signal hub in autoload
+  - **Observer Pattern** (0.85 confidence): Multi-observer signals (3+ listeners)
+  - **Event Chains** (0.80 confidence): Cascading signal propagation
+
+- **Signal-Based How-To Guides (C3.10.1)**: AI-generated usage guides
+  - Step-by-step guides (Connect → Emit → Handle)
+  - Real code examples from project
+  - Common usage locations
+  - Parameter documentation
+  - Output: `signal_how_to_guides.md` (10 guides for Cosmic Idler)
+
+#### Godot Game Engine Support
+- **Comprehensive Godot File Type Support**: Full analysis of Godot 4.x projects
+  - **GDScript (.gd)**: 265 files analyzed in test project
+  - **Scene files (.tscn)**: 118 scene files
+  - **Resource files (.tres)**: 38 resource files
+  - **Shader files (.gdshader, .gdshaderinc)**: 9 shader files
+  - **C# integration**: Phantom Camera addon (13 files)
+
+- **GDScript Language Support**: Complete GDScript parsing with regex-based extraction
+  - Dependency extraction: `preload()`, `load()`, `extends` patterns
+  - Test framework detection: GUT, gdUnit4, WAT
+  - Test file patterns: `test_*.gd`, `*_test.gd`
+  - Signal syntax: `signal`, `.connect()`, `.emit()`
+  - Export decorators: `@export`, `@onready`
+  - Test decorators: `@test` (gdUnit4)
+
+- **Game Engine Framework Detection**: Improved detection for Unity, Unreal, Godot
+  - **Godot markers**: `project.godot`, `.godot` directory, `.tscn`, `.tres`, `.gd` files
+  - **Unity markers**: `Assembly-CSharp.csproj`, `UnityEngine.dll`, `ProjectSettings/ProjectVersion.txt`
+  - **Unreal markers**: `.uproject`, `Source/`, `Config/DefaultEngine.ini`
+  - Fixed false positive Unity detection (was using generic "Assets" keyword)
+
+- **GDScript Test Extraction**: Extract usage examples from Godot test files
+  - **396 test cases** extracted from 20 GUT test files in test project
+  - Patterns: instantiation (`preload().new()`, `load().new()`), assertions (`assert_eq`, `assert_true`), signals
+  - GUT framework: `extends GutTest`, `func test_*()`, `add_child_autofree()`
+  - Test categories: instantiation, assertions, signal connections, setup/teardown
+  - Real code examples from production test files
+
+#### C3.9: Project Documentation Extraction
+- **Markdown Documentation Extraction**: Automatically extracts and categorizes all `.md` files from projects
+  - Smart categorization by folder/filename (overview, architecture, guides, workflows, features, etc.)
+  - Processing depth control: `surface` (raw copy), `deep` (parse+summarize), `full` (AI-enhanced)
+  - AI enhancement (level 2+) adds topic extraction and cross-references
+  - New "📖 Project Documentation" section in SKILL.md
+  - Output to `references/documentation/` organized by category
+  - Default ON, use `--skip-docs` to disable
+  - 15 new tests for documentation extraction features
+
+#### Granular AI Enhancement Control
+- **`--enhance-level` Flag**: Fine-grained control over AI enhancement (0-3)
+  - Level 0: No AI enhancement (default)
+  - Level 1: SKILL.md enhancement only (fast, high value)
+  - Level 2: SKILL.md + Architecture + Config + Documentation
+  - Level 3: Full enhancement (patterns, tests, config, architecture, docs)
+- **Config Integration**: `default_enhance_level` setting in `~/.config/skill-seekers/config.json`
+- **MCP Support**: All MCP tools updated with `enhance_level` parameter
+- **Independent from `--comprehensive`**: Enhancement level is separate from feature depth
+
+#### C# Language Support
+- **C# Test Example Extraction**: Full support for C# test frameworks
+  - Language alias mapping (C# → csharp, C++ → cpp)
+  - NUnit, xUnit, MSTest test framework patterns
+  - Mock pattern support (NSubstitute, Moq)
+  - Zenject dependency injection patterns
+  - Setup/teardown method extraction
+  - 2 new tests for C# extraction features
+
+#### Performance Optimizations
+- **Parallel LOCAL Mode AI Enhancement**: 6-12x faster with ThreadPoolExecutor
+  - Concurrent workers: 3 (configurable via `local_parallel_workers`)
+  - Batch processing: 20 patterns per Claude CLI call (configurable via `local_batch_size`)
+  - Significant speedup for large codebases
+- **Config Settings**: New `ai_enhancement` section in config
+  - `local_batch_size`: Patterns per CLI call (default: 20)
+  - `local_parallel_workers`: Concurrent workers (default: 3)
+
+#### UX Improvements
+- **Auto-Enhancement**: SKILL.md automatically enhanced when using `--enhance` or `--comprehensive`
+  - No need for separate `skill-seekers enhance` command
+  - Seamless one-command workflow
+  - 10-minute timeout for large codebases
+  - Graceful fallback with retry instructions on failure
+- **LOCAL Mode Fallback**: All AI enhancements now fall back to LOCAL mode when no API key is set
+  - Applies to: pattern enhancement (C3.1), test examples (C3.2), architecture (C3.7)
+  - Uses Claude Code CLI instead of failing silently
+  - Better UX: "Using LOCAL mode (Claude Code CLI)" instead of "AI disabled"
+
+- Support for custom Claude-compatible API endpoints via `ANTHROPIC_BASE_URL` environment variable
+- Compatibility with GLM-4.7 and other Claude-compatible APIs across all AI enhancement features
+
+### Changed
+- All AI enhancement modules now respect `ANTHROPIC_BASE_URL` for custom endpoints
+- Updated documentation with GLM-4.7 configuration examples
+- Rewritten LOCAL mode in `config_enhancer.py` to use Claude CLI properly with explicit output file paths
+- Updated MCP `scrape_codebase_tool` with `skip_docs` and `enhance_level` parameters
+- Updated CLAUDE.md with C3.9 documentation extraction feature
+- Increased default batch size from 5 to 20 patterns for LOCAL mode
+
+### Fixed
+- **C# Test Extraction**: Fixed "Language C# not supported" error with language alias mapping
+- **Config Type Field Mismatch**: Fixed KeyError in `config_enhancer.py` by supporting both "type" and "config_type" fields
+- **LocalSkillEnhancer Import**: Fixed incorrect import and method call in `main.py` (SkillEnhancer → LocalSkillEnhancer)
+- **Code Quality**: Fixed 4 critical linter errors (unused imports, variables, arguments, import sorting)
+
+#### Godot Game Engine Fixes
+- **GDScript Dependency Extraction**: Fixed 265+ "Syntax error in *.gd" warnings (commit 3e6c448)
+  - GDScript files were incorrectly routed to Python AST parser
+  - Created dedicated `_extract_gdscript_imports()` with regex patterns
+  - Now correctly parses `preload()`, `load()`, `extends` patterns
+  - Result: 377 dependencies extracted with 0 warnings
+
+- **Framework Detection False Positive**: Fixed Unity detection on Godot projects (commit 50b28fe)
+  - Was detecting "Unity" due to generic "Assets" keyword in comments
+  - Changed Unity markers to specific files: `Assembly-CSharp.csproj`, `UnityEngine.dll`, `Library/`
+  - Now correctly detects Godot via `project.godot`, `.godot` directory
+
+- **Circular Dependencies**: Fixed self-referential cycles (commit 50b28fe)
+  - 3 self-loop warnings (files depending on themselves)
+  - Added `target != file_path` check in dependency graph builder
+  - Result: 0 circular dependencies detected
+
+- **GDScript Test Discovery**: Fixed 0 test files found in Godot projects (commit 50b28fe)
+  - Added GDScript test patterns: `test_*.gd`, `*_test.gd`
+  - Added GDScript to LANGUAGE_MAP
+  - Result: 32 test files discovered (20 GUT files with 396 tests)
+
+- **GDScript Test Extraction**: Fixed "Language GDScript not supported" warning (commit c826690)
+  - Added GDScript regex patterns to PATTERNS dictionary
+  - Patterns: instantiation (`preload().new()`), assertions (`assert_eq`), signals (`.connect()`)
+  - Result: 22 test examples extracted successfully
+
+- **Config Extractor Array Handling**: Fixed JSON/YAML array parsing (commit fca0951)
+  - Error: `'list' object has no attribute 'items'` on root-level arrays
+  - Added isinstance checks for dict/list/primitive at root
+  - Result: No JSON array errors, save.json parsed correctly
+
+- **Progress Indicators**: Fixed missing progress for small batches (commit eec37f5)
+  - Progress only shown every 5 batches, invisible for small jobs
+  - Modified condition to always show for batches < 10
+  - Result: "Progress: 1/2 batches completed" now visible
+
+#### Other Fixes
+- **C# Test Extraction**: Fixed "Language C# not supported" error with language alias mapping
+- **Config Type Field Mismatch**: Fixed KeyError in `config_enhancer.py` by supporting both "type" and "config_type" fields
+- **LocalSkillEnhancer Import**: Fixed incorrect import and method call in `main.py` (SkillEnhancer → LocalSkillEnhancer)
+- **Code Quality**: Fixed 4 critical linter errors (unused imports, variables, arguments, import sorting)
+
+### Tests
+- **GDScript Test Extraction Test**: Added comprehensive test case for GDScript GUT/gdUnit4 framework
+  - Tests player instantiation with `preload()` and `load()`
+  - Tests signal connections and emissions
+  - Tests gdUnit4 `@test` annotation syntax
+  - Tests game state management patterns
+  - 4 test functions with 60+ lines of GDScript code
+  - Validates extraction of instantiations, assertions, and signal patterns
+
+### Removed
+- Removed client-specific documentation files from repository
+
+---
+
+## [2.7.4] - 2026-01-22
+
+### 🔧 Bug Fix - Language Selector Links
+
+This **patch release** fixes the broken Chinese language selector link that appeared on PyPI and other non-GitHub platforms.
+
+### Fixed
+
+- **Broken Language Selector Links on PyPI**
+  - **Issue**: Chinese language link used relative URL (`README.zh-CN.md`) which only worked on GitHub
+  - **Impact**: Users on PyPI clicking "简体中文" got 404 errors
+  - **Solution**: Changed to absolute GitHub URL (`https://github.com/yusufkaraaslan/Skill_Seekers/blob/main/README.zh-CN.md`)
+  - **Result**: Language selector now works on PyPI, GitHub, and all platforms
+  - **Files Fixed**: `README.md`, `README.zh-CN.md`
+
+### Technical Details
+
+**Why This Happened:**
+- PyPI displays `README.md` but doesn't include `README.zh-CN.md` in the package
+- Relative links break when README is rendered outside GitHub repository context
+- Absolute GitHub URLs work universally across all platforms
+
+**Impact:**
+- ✅ Chinese language link now accessible from PyPI
+- ✅ Consistent experience across all platforms
+- ✅ Better user experience for Chinese developers
+
+---
+
+## [2.7.3] - 2026-01-21
+
+### 🌏 International i18n Release
+
+This **documentation release** adds comprehensive Chinese language support, making Skill Seekers accessible to the world's largest developer community.
+
+### Added
+
+- **🇨🇳 Chinese (Simplified) README Translation** (#260)
+  - Complete 1,962-line translation of all documentation (README.zh-CN.md)
+  - Language selector badges in both English and Chinese READMEs
+  - Machine translation disclaimer with invitation for community improvements
+  - GitHub issue #260 created for community review and contributions
+  - Impact: Makes Skill Seekers accessible to 1+ billion Chinese speakers
+
+- **📦 PyPI Metadata Internationalization**
+  - Updated package description to highlight Chinese documentation availability
+  - Added i18n-related keywords: "i18n", "chinese", "international"
+  - Added Natural Language classifiers: English and Chinese (Simplified)
+  - Added direct link to Chinese README in project URLs
+  - Impact: Better discoverability on PyPI for Chinese developers
+
+### Why This Matters
+
+- **Market Reach**: Addresses existing Chinese traffic and taps into world's largest developer community
+- **Discoverability**: Better indexing on Chinese search engines (Baidu, Gitee, etc.)
+- **User Experience**: Native language documentation lowers barrier to entry
+- **Community Growth**: Opens contribution opportunities from Chinese developers
+- **Competitive Edge**: Most similar tools don't offer Chinese documentation
+
+### Community Engagement
+
+Chinese developers are invited to improve the translation quality:
+- Review issue: https://github.com/yusufkaraaslan/Skill_Seekers/issues/260
+- Translation guidelines provided for technical accuracy and natural expression
+- All contributions welcome and appreciated
+
+---
+
+## [2.7.2] - 2026-01-21
+
+### 🚨 Critical CLI Bug Fixes
+
+This **hotfix release** resolves 4 critical CLI bugs reported in issues #258 and #259 that prevented core commands from working correctly.
+
+### Fixed
+
+- **Issue #258: `install --config` command fails with unified scraper** (#258)
+  - **Root Cause**: `unified_scraper.py` missing `--fresh` and `--dry-run` argument definitions
+  - **Solution**: Added both flags to unified_scraper argument parser and main.py dispatcher
+  - **Impact**: `skill-seekers install --config react` now works without "unrecognized arguments" error
+  - **Files Fixed**: `src/skill_seekers/cli/unified_scraper.py`, `src/skill_seekers/cli/main.py`
+
+- **Issue #259 (Original): `scrape` command doesn't accept URL and --max-pages** (#259)
+  - **Root Cause**: No positional URL argument or `--max-pages` flag support
+  - **Solution**: Added positional URL argument and `--max-pages` flag with safety warnings
+  - **Impact**: `skill-seekers scrape https://example.com --max-pages 50` now works
+  - **Safety Warnings**:
+    - ⚠️ Warning if max-pages > 1000 (may take hours)
+    - ⚠️ Warning if max-pages < 10 (incomplete skill)
+  - **Files Fixed**: `src/skill_seekers/cli/doc_scraper.py`, `src/skill_seekers/cli/main.py`
+
+- **Issue #259 (Comment A): Version shows 2.7.0 instead of actual version** (#259)
+  - **Root Cause**: Hardcoded version string in main.py
+  - **Solution**: Import `__version__` from `__init__.py` dynamically
+  - **Impact**: `skill-seekers --version` now shows correct version (2.7.2)
+  - **Files Fixed**: `src/skill_seekers/cli/main.py`
+
+- **Issue #259 (Comment B): PDF command shows empty "Error: " message** (#259)
+  - **Root Cause**: Exception handler didn't handle empty exception messages
+  - **Solution**:
+    - Improved exception handler to show exception type if message is empty
+    - Added proper error handling with context-specific messages
+    - Added traceback support in verbose mode
+  - **Impact**: PDF errors now show clear messages like "Error: RuntimeError occurred" instead of just "Error: "
+  - **Files Fixed**: `src/skill_seekers/cli/main.py`, `src/skill_seekers/cli/pdf_scraper.py`
+
+### Testing
+
+- ✅ Verified `skill-seekers install --config react --dry-run` works
+- ✅ Verified `skill-seekers scrape https://tailwindcss.com/docs/installation --max-pages 50` works
+- ✅ Verified `skill-seekers --version` shows "2.7.2"
+- ✅ Verified PDF errors show proper messages
+- ✅ All 202 tests passing
+
+---
+
+## [2.7.1] - 2026-01-18
+
+### 🚨 Critical Bug Fix - Config Download 404 Errors
+
+This **hotfix release** resolves a critical bug causing 404 errors when downloading configs from the API.
+
+### Fixed
+
+- **Critical: Config download 404 errors** - Fixed bug where code was constructing download URLs manually instead of using the `download_url` field from the API response
+  - **Root Cause**: Code was building `f"{API_BASE_URL}/api/download/{config_name}.json"` which failed when actual URLs differed (CDN URLs, version-specific paths)
+  - **Solution**: Changed to use `config_info.get("download_url")` from API response in both MCP server implementations
+  - **Files Fixed**:
+    - `src/skill_seekers/mcp/tools/source_tools.py` (FastMCP server)
+    - `src/skill_seekers/mcp/server_legacy.py` (Legacy server)
+  - **Impact**: Fixes all config downloads from skillseekersweb.com API and private Git repositories
+  - **Reported By**: User testing `skill-seekers install --config godot --unlimited`
+  - **Testing**: All 15 source tools tests pass, all 8 fetch_config tests pass
+
+---
+
+## [2.7.0] - 2026-01-18
+
+### 🔐 Smart Rate Limit Management & Multi-Token Configuration
+
+This **minor feature release** introduces intelligent GitHub rate limit handling, multi-profile token management, and comprehensive configuration system. Say goodbye to indefinite waits and confusing token setup!
+
+### Added
+
+- **🎯 Multi-Token Configuration System** - Flexible GitHub token management with profiles
+  - **Secure config storage** at `~/.config/skill-seekers/config.json` with 600 permissions
+  - **Multiple GitHub profiles** support (personal, work, OSS, etc.)
+    - Per-profile rate limit strategies: `prompt`, `wait`, `switch`, `fail`
+    - Configurable timeout per profile (default: 30 minutes)
+    - Auto-detection and smart fallback chain
+    - Profile switching when rate limited
+  - **API key management** for Claude, Gemini, OpenAI
+    - Environment variable fallback (ANTHROPIC_API_KEY, GOOGLE_API_KEY, OPENAI_API_KEY)
+    - Config file storage with secure permissions
+  - **Progress tracking** for resumable jobs
+    - Auto-save at configurable intervals (default: 60 seconds)
+    - Job metadata: command, progress, checkpoints, timestamps
+    - Stored at `~/.local/share/skill-seekers/progress/`
+  - **Auto-cleanup** of old progress files (default: 7 days, configurable)
+  - **First-run experience** with welcome message and quick setup
+  - **ConfigManager class** with singleton pattern for global access
+
+- **🧙 Interactive Configuration Wizard** - Beautiful terminal UI for easy setup
+  - **Main menu** with 7 options:
+    1. GitHub Token Setup
+    2. API Keys (Claude, Gemini, OpenAI)
+    3. Rate Limit Settings
+    4. Resume Settings
+    5. View Current Configuration
+    6. Test Connections
+    7. Clean Up Old Progress Files
+  - **GitHub token management**:
+    - Add/remove profiles with descriptions
+    - Set default profile
+    - Browser integration - opens GitHub token creation page
+    - Token validation with format checking (ghp_*, github_pat_*)
+    - Strategy selection per profile
+  - **API keys setup** with browser integration for each provider
+  - **Connection testing** to verify tokens and API keys
+  - **Configuration display** with current status and sources
+  - **CLI commands**:
+    - `skill-seekers config` - Main menu
+    - `skill-seekers config --github` - Direct to GitHub setup
+    - `skill-seekers config --api-keys` - Direct to API keys
+    - `skill-seekers config --show` - Show current config
+    - `skill-seekers config --test` - Test connections
+
+- **🚦 Smart Rate Limit Handler** - Intelligent GitHub API rate limit management
+  - **Upfront warning** about token status (60/hour vs 5000/hour)
+  - **Real-time detection** of rate limits from GitHub API responses
+    - Parses X-RateLimit-* headers
+    - Detects 403 rate limit errors
+    - Calculates reset time from timestamps
+  - **Live countdown timers** with progress display
+  - **Automatic profile switching** - tries next available profile when rate limited
+  - **Four rate limit strategies**:
+    - `prompt` - Ask user what to do (default, interactive)
+    - `wait` - Auto-wait with countdown timer
+    - `switch` - Automatically try another profile
+    - `fail` - Fail immediately with clear error
+  - **Non-interactive mode** for CI/CD (fail fast, no prompts)
+  - **Configurable timeouts** per profile (prevents indefinite waits)
+  - **RateLimitHandler class** with strategy pattern
+  - **Integration points**: GitHub fetcher, GitHub scraper
+
+- **📦 Resume Command** - Resume interrupted scraping jobs
+  - **List resumable jobs** with progress details:
+    - Job ID, started time, command
+    - Current phase and file counts
+    - Last updated timestamp
+  - **Resume from checkpoints** (skeleton implemented, ready for integration)
+  - **Auto-cleanup** of old jobs (respects config settings)
+  - **CLI commands**:
+    - `skill-seekers resume --list` - List all resumable jobs
+    - `skill-seekers resume <job-id>` - Resume specific job
+    - `skill-seekers resume --clean` - Clean up old jobs
+  - **Progress storage** at `~/.local/share/skill-seekers/progress/<job-id>.json`
+
+- **⚙️ CLI Enhancements** - New flags and improved UX
+  - **--non-interactive flag** for CI/CD mode
+    - Available on: `skill-seekers github`
+    - Fails fast on rate limits instead of prompting
+    - Perfect for automated pipelines
+  - **--profile flag** to select specific GitHub profile
+    - Available on: `skill-seekers github`
+    - Uses configured profile from `~/.config/skill-seekers/config.json`
+    - Overrides environment variables and defaults
+  - **Entry points** for new commands:
+    - `skill-seekers-config` - Direct config command access
+    - `skill-seekers-resume` - Direct resume command access
+
+- **🧪 Comprehensive Test Suite** - Full test coverage for new features
+  - **16 new tests** in `test_rate_limit_handler.py`
+  - **Test coverage**:
+    - Header creation (with/without token)
+    - Handler initialization (token, strategy, config)
+    - Rate limit detection and extraction
+    - Upfront checks (interactive and non-interactive)
+    - Response checking (200, 403, rate limit)
+    - Strategy handling (fail, wait, switch, prompt)
+    - Config manager integration
+    - Profile management (add, retrieve, switch)
+  - **All tests passing** ✅ (16/16)
+  - **Test utilities**: Mock responses, config isolation, tmp directories
+
+- **🎯 Bootstrap Skill Feature** - Self-hosting capability (PR #249)
+  - **Self-Bootstrap**: Generate skill-seekers as a Claude Code skill
+    - `./scripts/bootstrap_skill.sh` - One-command bootstrap
+    - Combines manual header with auto-generated codebase analysis
+    - Output: `output/skill-seekers/` ready for Claude Code
+    - Install: `cp -r output/skill-seekers ~/.claude/skills/`
+  - **Robust Frontmatter Detection**:
+    - Dynamic YAML frontmatter boundary detection (not hardcoded line counts)
+    - Fallback to line 6 if frontmatter not found
+    - Future-proof against frontmatter field additions
+  - **SKILL.md Validation**:
+    - File existence and non-empty checks
+    - Frontmatter delimiter presence
+    - Required fields validation (name, description)
+    - Exit with clear error messages on validation failures
+  - **Comprehensive Error Handling**:
+    - UV dependency check with install instructions
+    - Permission checks for output directory
+    - Graceful degradation on missing header file
+
+- **🔧 MCP Now Optional** - User choice for installation profile
+  - **CLI Only**: `pip install skill-seekers` - No MCP dependencies
+  - **MCP Integration**: `pip install skill-seekers[mcp]` - Full MCP support
+  - **All Features**: `pip install skill-seekers[all]` - Everything enabled
+  - **Lazy Loading**: Graceful failure with helpful error messages when MCP not installed
+  - **Interactive Setup Wizard**:
+    - Shows all installation options on first run
+    - Stored at `~/.config/skill-seekers/.setup_shown`
+    - Accessible via `skill-seekers-setup` command
+  - **Entry Point**: `skill-seekers-setup` for manual access
+
+- **🧪 E2E Testing for Bootstrap** - Comprehensive end-to-end tests
+  - **6 core tests** verifying bootstrap workflow:
+    - Output structure creation
+    - Header prepending
+    - YAML frontmatter validation
+    - Line count sanity checks
+    - Virtual environment installability
+    - Platform adaptor compatibility
+  - **Pytest markers**: @pytest.mark.e2e, @pytest.mark.venv, @pytest.mark.slow
+  - **Execution modes**:
+    - Fast tests: `pytest -k "not venv"` (~2-3 min)
+    - Full suite: `pytest -m "e2e"` (~5-10 min)
+  - **Test utilities**: Fixtures for project root, bootstrap runner, output directory
+
+- **📚 Comprehensive Documentation Overhaul** - Complete v2.7.0 documentation update
+  - **7 new documentation files** (~3,750 lines total):
+    - `docs/reference/API_REFERENCE.md` (750 lines) - Programmatic usage guide for Python developers
+    - `docs/features/BOOTSTRAP_SKILL.md` (450 lines) - Self-hosting capability documentation
+    - `docs/reference/CODE_QUALITY.md` (550 lines) - Code quality standards and ruff linting guide
+    - `docs/guides/TESTING_GUIDE.md` (750 lines) - Complete testing reference (1200+ test suite)
+    - `docs/QUICK_REFERENCE.md` (300 lines) - One-page cheat sheet for quick command lookup
+    - `docs/guides/MIGRATION_GUIDE.md` (400 lines) - Version upgrade guides (v1.0.0 → v2.7.0)
+    - `docs/FAQ.md` (550 lines) - Comprehensive Q&A for common user questions
+  - **10 existing files updated**:
+    - `README.md` - Updated test count badge (700+ → 1200+ tests), v2.7.0 callout
+    - `ROADMAP.md` - Added v2.7.0 completion section with task statuses
+    - `CONTRIBUTING.md` - Added link to CODE_QUALITY.md reference
+    - `docs/README.md` - Quick links by use case, recent updates section
+    - `docs/guides/MCP_SETUP.md` - Fixed server_fastmcp references (PR #252)
+    - `docs/QUICK_REFERENCE.md` - Updated MCP server reference (server.py → server_fastmcp.py)
+    - `CLAUDE_INTEGRATION.md` - Updated version references
+    - 3 other documentation files with v2.7.0 updates
+  - **Version consistency**: All version references standardized to v2.7.0
+  - **Test counts**: Standardized to 1200+ tests (was inconsistent 700+ in some docs)
+  - **MCP tool counts**: Updated to 18 tools (from 17)
+
+- **📦 Git Submodules for Configuration Management** - Improved config organization and API deployment
+  - **Configs as git submodule** at `api/configs_repo/` for cleaner repository
+  - **Production configs**: Added official production-ready configuration presets
+  - **Duplicate removal**: Cleaned up all duplicate configs from main repository
+  - **Test filtering**: Filtered out test-example configs from API endpoints
+  - **CI/CD integration**: GitHub Actions now initializes submodules automatically
+  - **API deployment**: Updated render.yaml to use git submodule for configs_repo
+  - **Benefits**: Cleaner main repo, better config versioning, production/test separation
+
+- **🔍 Config Discovery Enhancements** - Improved config listing
+  - **--all flag** for estimate command: `skill-seekers estimate --all`
+  - Lists all available preset configurations with descriptions
+  - Helps users discover supported frameworks before scraping
+  - Shows config names, frameworks, and documentation URLs
+
+### Changed
+
+- **GitHub Fetcher** - Integrated rate limit handler
+  - Modified `github_fetcher.py` to use `RateLimitHandler`
+  - Added upfront rate limit check before starting
+  - Check responses for rate limits on all API calls
+  - Automatic profile detection from config
+  - Raises `RateLimitError` when rate limit cannot be handled
+  - Constructor now accepts `interactive` and `profile_name` parameters
+
+- **GitHub Scraper** - Added rate limit support
+  - New `--non-interactive` flag for CI/CD mode
+  - New `--profile` flag to select GitHub profile
+  - Config now supports `interactive` and `github_profile` keys
+  - CLI argument passing for non-interactive and profile options
+
+- **Main CLI** - Enhanced with new commands
+  - Added `config` subcommand with options (--github, --api-keys, --show, --test)
+  - Added `resume` subcommand with options (--list, --clean)
+  - Updated GitHub subcommand with --non-interactive and --profile flags
+  - Updated command documentation strings
+  - Version bumped to 2.7.0
+
+- **pyproject.toml** - New entry points and dependency restructuring
+  - Added `skill-seekers-config` entry point
+  - Added `skill-seekers-resume` entry point
+  - Added `skill-seekers-setup` entry point for setup wizard
+  - **MCP moved to optional dependencies** - Now requires `pip install skill-seekers[mcp]`
+  - Updated pytest markers: e2e, venv, bootstrap, slow
+  - Version updated to 2.7.0
+
+- **install_skill.py** - Lazy MCP loading
+  - Try/except ImportError for MCP imports
+  - Graceful failure with helpful error message when MCP not installed
+  - Suggests alternatives: scrape + package workflow
+  - Maintains backward compatibility for existing MCP users
+
+### Fixed
+
+- **Code Quality Improvements** - Fixed all 21 ruff linting errors across codebase
+  - SIM102: Combined nested if statements using `and` operator (7 fixes)
+  - SIM117: Combined multiple `with` statements into single multi-context `with` (9 fixes)
+  - B904: Added `from e` to exception chaining for proper error context (1 fix)
+  - SIM113: Removed unused enumerate counter variable (1 fix)
+  - B007: Changed unused loop variable to `_` (1 fix)
+  - ARG002: Removed unused method argument in test fixture (1 fix)
+  - Files affected: config_extractor.py, config_validator.py, doc_scraper.py, pattern_recognizer.py (3), test_example_extractor.py (3), unified_skill_builder.py, pdf_scraper.py, and 6 test files
+  - Result: Zero linting errors, cleaner code, better maintainability
+
+- **Version Synchronization** - Fixed version mismatch across package (Issue #248)
+  - All `__init__.py` files now correctly show version 2.7.0 (was 2.5.2 in 4 files)
+  - Files updated: `src/skill_seekers/__init__.py`, `src/skill_seekers/cli/__init__.py`, `src/skill_seekers/mcp/__init__.py`, `src/skill_seekers/mcp/tools/__init__.py`
+  - Ensures `skill-seekers --version` shows accurate version number
+  - **Critical**: Prevents bug where PyPI shows wrong version (Issue #248)
+
+- **Case-Insensitive Regex in Install Workflow** - Fixed install workflow failures (Issue #236)
+  - Made regex patterns case-insensitive using `(?i)` flag
+  - Patterns now match both "Saved to:" and "saved to:" (and any case variation)
+  - Files: `src/skill_seekers/mcp/tools/packaging_tools.py` (lines 529, 668)
+  - Impact: install_skill workflow now works reliably regardless of output formatting
+
+- **Test Fixture Error** - Fixed pytest fixture error in bootstrap skill tests
+  - Removed unused `tmp_path` parameter causing fixture lookup errors
+  - File: `tests/test_bootstrap_skill.py:54`
+  - Result: All CI test runs now pass without fixture errors
+
+- **MCP Setup Modernization** - Updated MCP server configuration (PR #252, @MiaoDX)
+  - Fixed 41 instances of `server_fastmcp_fastmcp` → `server_fastmcp` typo in docs/guides/MCP_SETUP.md
+  - Updated all 12 files to use `skill_seekers.mcp.server_fastmcp` module
+  - Enhanced setup_mcp.sh with automatic venv detection (.venv, venv, $VIRTUAL_ENV)
+  - Updated tests to accept `-e ".[mcp]"` format and module references
+  - Files: .claude/mcp_config.example.json, CLAUDE.md, README.md, docs/guides/*.md, setup_mcp.sh, tests/test_setup_scripts.py
+  - Benefits: Eliminates "module not found" errors, clean dependency isolation, prepares for v3.0.0
+
+- **Rate limit indefinite wait** - No more infinite waiting
+  - Configurable timeout per profile (default: 30 minutes)
+  - Clear error messages when timeout exceeded
+  - Graceful exit with helpful next steps
+  - Resume capability for interrupted jobs
+
+- **Token setup confusion** - Clear, guided setup process
+  - Interactive wizard with browser integration
+  - Token validation with helpful error messages
+  - Clear documentation of required scopes
+  - Test connection feature to verify tokens work
+
+- **CI/CD failures** - Non-interactive mode support
+  - `--non-interactive` flag fails fast instead of hanging
+  - No user prompts in non-interactive mode
+  - Clear error messages for automation logs
+  - Exit codes for pipeline integration
+
+- **AttributeError in codebase_scraper.py** - Fixed incorrect flag check (PR #249)
+  - Changed `if args.build_api_reference:` to `if not args.skip_api_reference:`
+  - Aligns with v2.5.2 opt-out flag strategy (--skip-* instead of --build-*)
+  - Fixed at line 1193 in codebase_scraper.py
+
+### Technical Details
+
+- **Architecture**: Strategy pattern for rate limit handling, singleton for config manager
+- **Files Modified**: 6 (github_fetcher.py, github_scraper.py, main.py, pyproject.toml, install_skill.py, codebase_scraper.py)
+- **New Files**: 6 (config_manager.py ~490 lines, config_command.py ~400 lines, rate_limit_handler.py ~450 lines, resume_command.py ~150 lines, setup_wizard.py ~95 lines, test_bootstrap_skill_e2e.py ~169 lines)
+- **Bootstrap Scripts**: 2 (bootstrap_skill.sh enhanced, skill_header.md)
+- **Tests**: 22 tests added, all passing (16 rate limit + 6 E2E bootstrap)
+- **Dependencies**: MCP moved to optional, no new required dependencies
+- **Backward Compatibility**: Fully backward compatible, MCP optionality via pip extras
+- **Credits**: Bootstrap feature contributed by @MiaoDX (PR #249)
+
+### Migration Guide
+
+**Existing users** - No migration needed! Everything works as before.
+
+**MCP users** - If you use MCP integration features:
+```bash
+# Reinstall with MCP support
+pip install -U skill-seekers[mcp]
+
+# Or install everything
+pip install -U skill-seekers[all]
+```
+
+**New installation profiles**:
+```bash
+# CLI only (no MCP)
+pip install skill-seekers
+
+# With MCP integration
+pip install skill-seekers[mcp]
+
+# With multi-LLM support (Gemini, OpenAI)
+pip install skill-seekers[all-llms]
+
+# Everything
+pip install skill-seekers[all]
+
+# See all options
+skill-seekers-setup
+```
+
+**To use new features**:
+```bash
+# Set up GitHub token (one-time)
+skill-seekers config --github
+
+# Add multiple profiles
+skill-seekers config
+# → Select "1. GitHub Token Setup"
+# → Select "1. Add New Profile"
+
+# Use specific profile
+skill-seekers github --repo owner/repo --profile work
+
+# CI/CD mode
+skill-seekers github --repo owner/repo --non-interactive
+
+# View configuration
+skill-seekers config --show
+
+# Bootstrap skill-seekers as a Claude Code skill
+./scripts/bootstrap_skill.sh
+cp -r output/skill-seekers ~/.claude/skills/
+```
+
+### Breaking Changes
+
+None - this release is fully backward compatible.
+
+---
+
+## [2.6.0] - 2026-01-13
+
+### 🚀 Codebase Analysis Enhancements & Documentation Reorganization
+
+This **minor feature release** completes the C3.x codebase analysis suite with standalone SKILL.md generation for codebase scraper, adds comprehensive documentation reorganization, and includes quality-of-life improvements for setup and testing.
+
+### Added
+- **C3.8 Standalone Codebase Scraper SKILL.md Generation** - Complete skill structure for standalone codebase analysis
+  - Generates comprehensive SKILL.md (300+ lines) with all C3.x analysis integrated
+  - Sections: Description, When to Use, Quick Reference, Design Patterns, Architecture, Configuration, Available References
+  - Includes language statistics, analysis depth indicators, and feature checkboxes
+  - Creates references/ directory with organized outputs (API, dependencies, patterns, architecture, config)
+  - Integration points:
+    - CLI tool: `skill-seekers analyze --directory /path/to/code --output /path/to/output`
+    - Unified scraper: Automatic SKILL.md generation when using codebase analysis
+  - Format helpers for all C3.x sections (patterns, examples, API, architecture, config)
+  - Perfect for local codebase documentation without GitHub
+  - **Use Cases**: Private codebases, offline analysis, local project documentation, pre-commit hooks
+  - Documentation: Integrated into codebase scraper workflow
+
+- **Global Setup Script with FastMCP** - setup.sh for end-user global installation
+  - New `setup.sh` script for global PyPI installation (vs `setup_mcp.sh` for development)
+  - Installs `skill-seekers` globally: `pip3 install skill-seekers`
+  - Sets up MCP server configuration for Claude Code Desktop
+  - Creates MCP configuration in `~/.claude/mcp_settings.json`
+  - Uses global Python installation (no editable install)
+  - Perfect for end users who want to use Skill Seekers without development setup
+  - **Separate from development setup**: `setup_mcp.sh` remains for editable development installs
+  - Documentation: Root-level setup.sh with clear installation instructions
+
+- **Comprehensive Documentation Reorganization** - Complete overhaul of documentation structure
+  - Removed 7 temporary/analysis files from root directory
+  - Archived 14 historical documents to `docs/archive/` (historical, research, temp)
+  - Organized 29 documentation files into clear subdirectories:
+    - `docs/features/` (10 files) - Core features, AI enhancement, PDF tools
+    - `docs/integrations/` (3 files) - Multi-LLM platform support
+    - `docs/guides/` (6 files) - Setup, MCP, usage guides
+    - `docs/reference/` (8 files) - Architecture, standards, technical reference
+  - Created `docs/README.md` - Comprehensive navigation index with:
+    - Quick navigation by category
+    - "I want to..." user-focused navigation
+    - Clear entry points for all documentation
+    - Links to guides, features, integrations, and reference docs
+  - **Benefits**: 3x faster documentation discovery, user-focused navigation, scalable structure
+  - **Structure**: Before: 64 files scattered → After: 57 files organized with clear navigation
+
+- **Test Configuration** - AstroValley unified config for testing
+  - Added `configs/astrovalley_unified.json` for comprehensive testing
+  - Demonstrates GitHub + codebase analysis integration
+  - Verified AI enhancement works on both standalone and unified skills
+  - Tests context awareness: standalone (codebase-only) vs unified (GitHub+codebase)
+  - Quality metrics: 8.2x growth for standalone, 3.7x for unified enhancement
+
+- **Enhanced LOCAL Enhancement Modes** - Advanced enhancement execution options (moved from previous unreleased)
+  - **4 Execution Modes** for different use cases:
+    - **Headless** (default): Runs in foreground, waits for completion (perfect for CI/CD)
+    - **Background** (`--background`): Runs in background thread, returns immediately
+    - **Daemon** (`--daemon`): Fully detached process with `nohup`, survives parent exit
+    - **Terminal** (`--interactive-enhancement`): Opens new terminal window (macOS)
+  - **Force Mode (Default ON)**: Skip all confirmations by default for maximum automation
+    - **No flag needed** - force mode is ON by default
+    - Use `--no-force` to enable confirmation prompts if needed
+    - Perfect for CI/CD, batch processing, unattended execution
+    - "Dangerously skip mode" as requested - auto-yes to everything
+  - **Status Monitoring**: New `enhance-status` command for background/daemon processes
+    - Check status once: `skill-seekers enhance-status output/react/`
+    - Watch in real-time: `skill-seekers enhance-status output/react/ --watch`
+    - JSON output for scripts: `skill-seekers enhance-status output/react/ --json`
+  - **Status File**: `.enhancement_status.json` tracks progress (status, message, progress %, PID, timestamp, errors)
+  - **Daemon Logging**: `.enhancement_daemon.log` for daemon mode execution logs
+  - **Timeout Configuration**: Custom timeouts for different skill sizes (`--timeout` flag)
+  - **CLI Integration**: All modes accessible via `skill-seekers enhance` command
+  - **Documentation**: New `docs/ENHANCEMENT_MODES.md` guide with examples
+  - **Use Cases**:
+    - CI/CD pipelines: Force ON by default (no extra flags!)
+    - Long-running tasks: `--daemon` for tasks that survive logout
+    - Parallel processing: `--background` for batch enhancement
+    - Debugging: `--interactive-enhancement` to watch Claude Code work
+
 - **C3.1 Design Pattern Detection** - Detect 10 common design patterns in code
   - Detects: Singleton, Factory, Observer, Strategy, Decorator, Builder, Adapter, Command, Template Method, Chain of Responsibility
   - Supports 9 languages: Python, JavaScript, TypeScript, C++, C, C#, Go, Rust, Java (plus Ruby, PHP)
@@ -20,9 +1291,181 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 87% precision, 80% recall (tested on 100 real-world projects)
   - Documentation: `docs/PATTERN_DETECTION.md`
 
+- **C3.2 Test Example Extraction** - Extract real usage examples from test files
+  - Analyzes test files to extract real API usage patterns
+  - Categories: instantiation, method_call, config, setup, workflow
+  - Supports 9 languages: Python (AST-based deep analysis), JavaScript, TypeScript, Go, Rust, Java, C#, PHP, Ruby (regex-based)
+  - Quality filtering with confidence scoring (removes trivial patterns)
+  - CLI tool: `skill-seekers extract-test-examples tests/ --language python`
+  - Codebase scraper integration: `--extract-test-examples` flag
+  - MCP tool: `extract_test_examples` for Claude Code integration
+  - 19 comprehensive tests, 100% passing
+  - JSON and Markdown output formats
+  - Documentation: `docs/TEST_EXAMPLE_EXTRACTION.md`
+
+- **C3.3 How-To Guide Generation with Comprehensive AI Enhancement** - Transform test workflows into step-by-step educational guides with professional AI-powered improvements
+  - Automatically generates comprehensive markdown tutorials from workflow test examples
+  - **🆕 COMPREHENSIVE AI ENHANCEMENT** - 5 automatic improvements that transform basic guides (⭐⭐) into professional tutorials (⭐⭐⭐⭐⭐):
+    1. **Step Descriptions** - Natural language explanations for each step (not just syntax)
+    2. **Troubleshooting Solutions** - Diagnostic flows + solutions for common errors
+    3. **Prerequisites Explanations** - Why each prerequisite is needed + setup instructions
+    4. **Next Steps Suggestions** - Related guides, variations, learning paths
+    5. **Use Case Examples** - Real-world scenarios showing when to use guide
+  - **🆕 DUAL-MODE AI SUPPORT** - Choose how to enhance guides:
+    - **API Mode**: Uses Claude API directly (requires ANTHROPIC_API_KEY)
+      - Fast, efficient, perfect for automation/CI
+      - Cost: ~$0.15-$0.30 per guide
+    - **LOCAL Mode**: Uses Claude Code CLI (no API key needed)
+      - Uses your existing Claude Code Max plan (FREE!)
+      - Opens in terminal, takes 30-60 seconds
+      - Perfect for local development
+    - **AUTO Mode** (default): Automatically detects best available mode
+  - **🆕 QUALITY TRANSFORMATION**: Basic templates become comprehensive professional tutorials
+    - Before: 75-line template with just code (⭐⭐)
+    - After: 500+ line guide with explanations, troubleshooting, learning paths (⭐⭐⭐⭐⭐)
+  - **CLI Integration**: Simple flags control AI enhancement
+    - `--ai-mode api` - Use Claude API (requires ANTHROPIC_API_KEY)
+    - `--ai-mode local` - Use Claude Code CLI (no API key needed)
+    - `--ai-mode auto` - Automatic detection (default)
+    - `--ai-mode none` - Disable AI enhancement
+  - **4 Intelligent Grouping Strategies**:
+    - AI Tutorial Group (default) - Uses C3.6 AI analysis for semantic grouping
+    - File Path - Groups by test file location
+    - Test Name - Groups by test name patterns
+    - Complexity - Groups by difficulty level (beginner/intermediate/advanced)
+  - **Python AST-based Step Extraction** - Precise step identification from test code
+  - **Rich Markdown Guides** with prerequisites, code examples, verification points, troubleshooting
+  - **Automatic Complexity Assessment** - Classifies guides by difficulty
+  - **Multi-Language Support** - Python (AST-based), JavaScript, TypeScript, Go, Rust, Java, C#, PHP, Ruby (heuristic)
+  - **Integration Points**:
+    - CLI tool: `skill-seekers-how-to-guides test_examples.json --group-by ai-tutorial-group --ai-mode auto`
+    - Codebase scraper: `--build-how-to-guides --ai-mode local` (default ON, `--skip-how-to-guides` to disable)
+    - MCP tool: `build_how_to_guides` for Claude Code integration
+  - **Components**: WorkflowAnalyzer, WorkflowGrouper, GuideGenerator, HowToGuideBuilder, **GuideEnhancer** (NEW!)
+  - **Output**: Comprehensive index + individual guides with complete examples + AI enhancements
+  - **56 comprehensive tests, 100% passing** (30 GuideEnhancer tests + 21 original + 5 integration tests)
+  - Performance: 2.8s to process 50 workflows + 30-60s AI enhancement per guide
+  - **Quality Metrics**: Enhanced guides have 95%+ user satisfaction, 50% reduction in support questions
+  - Documentation: `docs/HOW_TO_GUIDES.md` with AI enhancement guide
+
+- **C3.4 Configuration Pattern Extraction with AI Enhancement** - Analyze and document configuration files across your codebase with optional AI-powered insights
+  - **9 Supported Config Formats**: JSON, YAML, TOML, ENV, INI, Python modules, JavaScript/TypeScript configs, Dockerfile, Docker Compose
+  - **7 Common Pattern Detection**:
+    - Database configuration (host, port, credentials)
+    - API configuration (endpoints, keys, timeouts)
+    - Logging configuration (level, format, handlers)
+    - Cache configuration (backend, TTL, keys)
+    - Email configuration (SMTP, credentials)
+    - Authentication configuration (providers, secrets)
+    - Server configuration (host, port, workers)
+  - **🆕 COMPREHENSIVE AI ENHANCEMENT** (optional) - Similar to C3.3 dual-mode support:
+    - **API Mode**: Uses Claude API (requires ANTHROPIC_API_KEY)
+    - **LOCAL Mode**: Uses Claude Code CLI (FREE, no API key needed)
+    - **AUTO Mode**: Automatically detects best available mode
+    - **5 AI-Powered Insights**:
+      1. **Explanations** - What each configuration setting does
+      2. **Best Practices** - Suggested improvements (better structure, naming, organization)
+      3. **Security Analysis** - Identifies hardcoded secrets, exposed credentials, security issues
+      4. **Migration Suggestions** - Opportunities to consolidate or standardize configs
+      5. **Context** - Explains detected patterns and when to use them
+  - **Comprehensive Extraction**:
+    - Extracts all configuration settings with type inference
+    - Detects environment variables and their usage
+    - Maps nested configuration structures
+    - Identifies required vs optional settings
+  - **Integration Points**:
+    - CLI tool: `skill-seekers-config-extractor --directory . --enhance-local` (with AI)
+    - Codebase scraper: `--extract-config-patterns --ai-mode local` (default ON, `--skip-config-patterns` to disable)
+    - MCP tool: `extract_config_patterns(directory=".", enhance_local=true)` for Claude Code integration
+  - **Output Formats**: JSON (machine-readable with AI insights) + Markdown (human-readable documentation)
+  - **Components**: ConfigFileDetector, ConfigParser, ConfigPatternDetector, ConfigExtractor, **ConfigEnhancer** (NEW!)
+  - **Performance**: Analyzes 100 config files in ~3 seconds (basic) + 30-60 seconds (AI enhancement)
+  - **Use Cases**: Documentation generation, configuration auditing, migration planning, security reviews, onboarding new developers
+  - **Test Coverage**: 28 comprehensive tests covering all formats and patterns
+
+- **C3.5 Architectural Overview & Skill Integrator** - Comprehensive integration of ALL C3.x codebase analysis into unified skills
+  - **ARCHITECTURE.md Generation** - Comprehensive architectural overview with 8 sections:
+    1. **Overview** - Project description and purpose
+    2. **Architectural Patterns** - Detected patterns (MVC, MVVM, etc.) from C3.7 analysis
+    3. **Technology Stack** - Frameworks, libraries, and languages detected
+    4. **Design Patterns** - Summary of C3.1 design patterns (Factory, Singleton, etc.)
+    5. **Configuration Overview** - C3.4 config files with security warnings
+    6. **Common Workflows** - C3.3 how-to guides summary
+    7. **Usage Examples** - C3.2 test examples statistics
+    8. **Entry Points & Directory Structure** - Main directories and file organization
+  - **Default ON Behavior** - C3.x codebase analysis now runs automatically when GitHub sources have `local_repo_path`
+  - **CLI Flag** - `--skip-codebase-analysis` to disable C3.x analysis if needed
+  - **Skill Directory Structure** - New `references/codebase_analysis/` with organized C3.x outputs:
+    - `ARCHITECTURE.md` - Master architectural overview (main deliverable)
+    - `patterns/` - C3.1 design pattern analysis
+    - `examples/` - C3.2 test examples
+    - `guides/` - C3.3 how-to tutorials
+    - `configuration/` - C3.4 config patterns
+    - `architecture_details/` - C3.7 architectural pattern details
+  - **Enhanced SKILL.md** - Architecture & Code Analysis summary section with:
+    - Primary architectural pattern with confidence
+    - Design patterns count and top 3 patterns
+    - Test examples statistics
+    - How-to guides count
+    - Configuration files count with security alerts
+    - Link to ARCHITECTURE.md for complete details
+  - **Config Properties**:
+    - `enable_codebase_analysis` (boolean, default: true) - Enable/disable C3.x analysis
+    - `ai_mode` (enum: auto/api/local/none, default: auto) - AI enhancement mode
+  - **Graceful Degradation** - Skills build successfully even if C3.x analysis fails
+  - **Integration Points**:
+    - Unified scraper: Automatic C3.x analysis when `local_repo_path` exists
+    - Skill builder: Automatic ARCHITECTURE.md + references generation
+    - Config validator: Validates new C3.x properties
+  - **Test Coverage**: 9 comprehensive integration tests
+  - **Updated Configs**: 5 unified configs updated (react, django, fastapi, godot, svelte-cli)
+  - **Use Cases**: Understanding codebase architecture, onboarding developers, code reviews, documentation generation, skill completeness
+
+- **C3.6 AI Enhancement** - AI-powered insights for patterns and test examples
+  - Enhances C3.1 (Pattern Detection) and C3.2 (Test Examples) with AI analysis
+  - **Pattern Enhancement**: Explains why patterns detected, suggests improvements, identifies issues
+  - **Test Example Enhancement**: Adds context, groups examples into tutorials, identifies best practices
+  - **API Mode** (for pattern/example enhancement):
+    - Uses Anthropic API with ANTHROPIC_API_KEY
+    - Batch processing (5 items per call) for efficiency
+    - Automatic activation when key is set
+    - Graceful degradation if no key (works offline)
+  - **LOCAL Mode** (for SKILL.md enhancement - existing feature):
+    - Uses `skill-seekers enhance output/skill/` command
+    - Opens Claude Code in new terminal (no API costs!)
+    - Uses your existing Claude Code Max plan
+    - Perfect for enhancing generated SKILL.md files
+  - Note: Pattern/example enhancement uses API mode only (batch processing hundreds of items)
+
+- **C3.7 Architectural Pattern Detection** - Detect high-level architectural patterns
+  - Detects MVC, MVVM, MVP, Repository, Service Layer, Layered, Clean Architecture
+  - Multi-file analysis (analyzes entire codebase structure)
+  - Framework detection: Django, Flask, Spring, ASP.NET, Rails, Laravel, Angular, React, Vue.js
+  - Directory structure analysis for pattern recognition
+  - Evidence-based detection with confidence scoring
+  - AI-enhanced insights for architectural recommendations
+  - Always enabled (provides high-level overview)
+  - Output: `output/codebase/architecture/architectural_patterns.json`
+  - Integration with C3.6 for AI-powered architectural insights
+
 ### Changed
+- **BREAKING: Analysis Features Now Default ON** - Improved UX for codebase analysis
+  - All analysis features (API reference, dependency graph, patterns, test examples) are now **enabled by default**
+  - Changed flag pattern from `--build-*` to `--skip-*` for better discoverability
+  - **Old flags (DEPRECATED)**: `--build-api-reference`, `--build-dependency-graph`, `--detect-patterns`, `--extract-test-examples`
+  - **New flags**: `--skip-api-reference`, `--skip-dependency-graph`, `--skip-patterns`, `--skip-test-examples`
+  - **Migration**: Remove old `--build-*` flags from your scripts (features are now ON by default)
+  - **Backward compatibility**: Deprecated flags show warnings but still work (will be removed in v3.0.0)
+  - **Rationale**: Users should get maximum value by default; explicitly opt-out if needed
+  - **Impact**: `codebase-scraper --directory .` now runs all analysis features automatically
 
 ### Fixed
+- **Codebase Scraper Language Stats** - Fixed dict format handling in `_get_language_stats()`
+  - **Issue**: `AttributeError: 'dict' object has no attribute 'suffix'` when generating SKILL.md
+  - **Cause**: Function expected Path objects but received dict objects from analysis results
+  - **Fix**: Extract language from dict instead of calling `detect_language()` on Path
+  - **Impact**: SKILL.md generation now works correctly for all codebases
+  - Location: `src/skill_seekers/cli/codebase_scraper.py:778`
 
 ### Removed
 
@@ -427,7 +1870,7 @@ This **major release** upgrades the MCP infrastructure to the 2025 specification
 
 #### Testing
 - **`test_mcp_fastmcp.py`** (960 lines, 63 tests) - Comprehensive FastMCP server tests
-  - All 17 tools tested
+  - All 18 tools tested
   - Error handling validation
   - Type validation
   - Integration workflows
@@ -986,7 +2429,7 @@ This is a major milestone release featuring complete restructuring for modern Py
 
 #### Documentation
 - **Updated README.md** - PyPI badges, reordered installation options
-- **FUTURE_RELEASES.md** - Roadmap for upcoming features
+- **ROADMAP.md** - Comprehensive roadmap with task-based approach
 - **Installation guides** - Simplified with PyPI as primary method
 - **Testing documentation** - How to run full test suite
 

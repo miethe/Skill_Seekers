@@ -17,34 +17,28 @@ Usage:
     skill-seekers upload output/react-openai.zip --target openai
 """
 
+import argparse
 import os
 import sys
-import json
-import argparse
 from pathlib import Path
 
 # Import utilities
 try:
-    from utils import (
-        print_upload_instructions,
-        validate_zip_file
-    )
+    from utils import print_upload_instructions
 except ImportError:
     sys.path.insert(0, str(Path(__file__).parent))
-    from utils import (
-        print_upload_instructions,
-        validate_zip_file
-    )
+    from utils import print_upload_instructions
 
 
-def upload_skill_api(package_path, target='claude', api_key=None):
+def upload_skill_api(package_path, target="claude", api_key=None, **kwargs):
     """
     Upload skill package to LLM platform
 
     Args:
         package_path: Path to skill package file
-        target: Target platform ('claude', 'gemini', 'openai')
+        target: Target platform ('claude', 'gemini', 'openai', 'chroma', 'weaviate')
         api_key: Optional API key (otherwise read from environment)
+        **kwargs: Platform-specific upload options
 
     Returns:
         tuple: (success, message)
@@ -62,14 +56,16 @@ def upload_skill_api(package_path, target='claude', api_key=None):
 
     # Get API key
     if not api_key:
-        api_key = os.environ.get(adaptor.get_env_var_name(), '').strip()
+        api_key = os.environ.get(adaptor.get_env_var_name(), "").strip()
 
-    if not api_key:
-        return False, f"{adaptor.get_env_var_name()} not set. Export your API key first."
+    # API key validation only for platforms that require it
+    if target in ["claude", "gemini", "openai"]:
+        if not api_key:
+            return False, f"{adaptor.get_env_var_name()} not set. Export your API key first."
 
-    # Validate API key format
-    if not adaptor.validate_api_key(api_key):
-        return False, f"Invalid API key format for {adaptor.PLATFORM_NAME}"
+        # Validate API key format
+        if not adaptor.validate_api_key(api_key):
+            return False, f"Invalid API key format for {adaptor.PLATFORM_NAME}"
 
     package_path = Path(package_path)
 
@@ -89,21 +85,27 @@ def upload_skill_api(package_path, target='claude', api_key=None):
     print(f"⏳ Uploading to {adaptor.PLATFORM_NAME}...")
 
     try:
-        result = adaptor.upload(package_path, api_key)
+        result = adaptor.upload(package_path, api_key, **kwargs)
 
-        if result['success']:
+        if result["success"]:
             print()
             print(f"✅ {result['message']}")
             print()
-            if result['url']:
+            if result.get("url"):
                 print("Your skill is now available at:")
                 print(f"   {result['url']}")
-            if result['skill_id']:
+            if result.get("skill_id"):
                 print(f"   Skill ID: {result['skill_id']}")
+            if result.get("collection"):
+                print(f"   Collection: {result['collection']}")
+            if result.get("class_name"):
+                print(f"   Class: {result['class_name']}")
+            if result.get("count"):
+                print(f"   Documents uploaded: {result['count']}")
             print()
             return True, "Upload successful"
         else:
-            return False, result['message']
+            return False, result["message"]
 
     except Exception as e:
         return False, f"Unexpected error: {str(e)}"
@@ -111,7 +113,7 @@ def upload_skill_api(package_path, target='claude', api_key=None):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Upload a skill package to LLM platforms",
+        description="Upload a skill package to LLM platforms and vector databases",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Setup:
@@ -124,6 +126,14 @@ Setup:
   OpenAI:
     export OPENAI_API_KEY=sk-proj-...
 
+  ChromaDB (local):
+    # No API key needed for local instance
+    chroma run  # Start server
+
+  Weaviate (local):
+    # No API key needed for local instance
+    docker run -p 8080:8080 semitechnologies/weaviate:latest
+
 Examples:
   # Upload to Claude (default)
   skill-seekers upload output/react.zip
@@ -134,32 +144,98 @@ Examples:
   # Upload to OpenAI
   skill-seekers upload output/react-openai.zip --target openai
 
-  # Upload with explicit API key
-  skill-seekers upload output/react.zip --api-key sk-ant-...
-        """
+  # Upload to ChromaDB (local)
+  skill-seekers upload output/react-chroma.json --target chroma
+
+  # Upload to ChromaDB with OpenAI embeddings
+  skill-seekers upload output/react-chroma.json --target chroma --embedding-function openai
+
+  # Upload to Weaviate (local)
+  skill-seekers upload output/react-weaviate.json --target weaviate
+
+  # Upload to Weaviate Cloud
+  skill-seekers upload output/react-weaviate.json --target weaviate --use-cloud --cluster-url https://xxx.weaviate.network --api-key YOUR_KEY
+        """,
+    )
+
+    parser.add_argument("package_file", help="Path to skill package file (e.g., output/react.zip)")
+
+    parser.add_argument(
+        "--target",
+        choices=["claude", "gemini", "openai", "chroma", "weaviate"],
+        default="claude",
+        help="Target platform (default: claude)",
+    )
+
+    parser.add_argument("--api-key", help="Platform API key (or set environment variable)")
+
+    # ChromaDB upload options
+    parser.add_argument(
+        "--chroma-url",
+        help="ChromaDB URL (default: http://localhost:8000 for HTTP, or use --persist-directory for local)",
     )
 
     parser.add_argument(
-        'package_file',
-        help='Path to skill package file (e.g., output/react.zip)'
+        "--persist-directory",
+        help="Local directory for persistent ChromaDB storage (default: ./chroma_db)",
     )
 
     parser.add_argument(
-        '--target',
-        choices=['claude', 'gemini', 'openai'],
-        default='claude',
-        help='Target LLM platform (default: claude)'
+        "--embedding-function",
+        choices=["openai", "sentence-transformers", "none"],
+        help="Embedding function for ChromaDB/Weaviate (default: platform default)",
     )
 
     parser.add_argument(
-        '--api-key',
-        help='Platform API key (or set environment variable)'
+        "--openai-api-key", help="OpenAI API key for embeddings (or set OPENAI_API_KEY env var)"
+    )
+
+    # Weaviate upload options
+    parser.add_argument(
+        "--weaviate-url",
+        default="http://localhost:8080",
+        help="Weaviate URL (default: http://localhost:8080)",
+    )
+
+    parser.add_argument(
+        "--use-cloud",
+        action="store_true",
+        help="Use Weaviate Cloud (requires --api-key and --cluster-url)",
+    )
+
+    parser.add_argument(
+        "--cluster-url", help="Weaviate Cloud cluster URL (e.g., https://xxx.weaviate.network)"
     )
 
     args = parser.parse_args()
 
+    # Build kwargs for vector DB upload
+    upload_kwargs = {}
+
+    if args.target == "chroma":
+        if args.chroma_url:
+            upload_kwargs["chroma_url"] = args.chroma_url
+        if args.persist_directory:
+            upload_kwargs["persist_directory"] = args.persist_directory
+        if args.embedding_function:
+            upload_kwargs["embedding_function"] = args.embedding_function
+        if args.openai_api_key:
+            upload_kwargs["openai_api_key"] = args.openai_api_key
+
+    elif args.target == "weaviate":
+        upload_kwargs["weaviate_url"] = args.weaviate_url
+        upload_kwargs["use_cloud"] = args.use_cloud
+        if args.cluster_url:
+            upload_kwargs["cluster_url"] = args.cluster_url
+        if args.embedding_function:
+            upload_kwargs["embedding_function"] = args.embedding_function
+        if args.openai_api_key:
+            upload_kwargs["openai_api_key"] = args.openai_api_key
+
     # Upload skill
-    success, message = upload_skill_api(args.package_file, args.target, args.api_key)
+    success, message = upload_skill_api(
+        args.package_file, args.target, args.api_key, **upload_kwargs
+    )
 
     if success:
         sys.exit(0)

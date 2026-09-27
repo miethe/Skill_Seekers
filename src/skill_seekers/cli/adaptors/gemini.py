@@ -3,16 +3,17 @@
 Google Gemini Adaptor
 
 Implements platform-specific handling for Google Gemini skills.
-Uses Gemini Files API for grounding and Gemini 2.0 Flash for enhancement.
+Uses Gemini Files API for grounding and Gemini 2.5 Flash for enhancement.
 """
 
+import json
 import os
 import tarfile
-import json
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any
 
 from .base import SkillAdaptor, SkillMetadata
+from skill_seekers.cli.arguments.common import DEFAULT_CHUNK_TOKENS, DEFAULT_CHUNK_OVERLAP_TOKENS
 
 
 class GeminiAdaptor(SkillAdaptor):
@@ -23,7 +24,7 @@ class GeminiAdaptor(SkillAdaptor):
     - Plain markdown format (no YAML frontmatter)
     - tar.gz packaging for Gemini Files API
     - Upload to Google AI Studio / Files API
-    - AI enhancement using Gemini 2.0 Flash
+    - AI enhancement using Gemini 2.5 Flash
     """
 
     PLATFORM = "gemini"
@@ -86,7 +87,15 @@ See the references directory for complete documentation with examples and best p
         # Return plain markdown (NO frontmatter)
         return content_body
 
-    def package(self, skill_dir: Path, output_path: Path) -> Path:
+    def package(
+        self,
+        skill_dir: Path,
+        output_path: Path,
+        enable_chunking: bool = False,
+        chunk_max_tokens: int = DEFAULT_CHUNK_TOKENS,
+        preserve_code_blocks: bool = True,
+        chunk_overlap_tokens: int = DEFAULT_CHUNK_OVERLAP_TOKENS,
+    ) -> Path:
         """
         Package skill into tar.gz file for Gemini.
 
@@ -105,20 +114,20 @@ See the references directory for complete documentation with examples and best p
         skill_dir = Path(skill_dir)
 
         # Determine output filename
-        if output_path.is_dir() or str(output_path).endswith('/'):
+        if output_path.is_dir() or str(output_path).endswith("/"):
             output_path = Path(output_path) / f"{skill_dir.name}-gemini.tar.gz"
-        elif not str(output_path).endswith('.tar.gz'):
+        elif not str(output_path).endswith(".tar.gz"):
             # Replace .zip with .tar.gz if needed
-            output_str = str(output_path).replace('.zip', '.tar.gz')
-            if not output_str.endswith('.tar.gz'):
-                output_str += '.tar.gz'
+            output_str = str(output_path).replace(".zip", ".tar.gz")
+            if not output_str.endswith(".tar.gz"):
+                output_str += ".tar.gz"
             output_path = Path(output_str)
 
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Create tar.gz file
-        with tarfile.open(output_path, 'w:gz') as tar:
+        with tarfile.open(output_path, "w:gz") as tar:
             # Add SKILL.md as system_instructions.md
             skill_md = skill_dir / "SKILL.md"
             if skill_md.exists():
@@ -128,21 +137,22 @@ See the references directory for complete documentation with examples and best p
             refs_dir = skill_dir / "references"
             if refs_dir.exists():
                 for ref_file in refs_dir.rglob("*"):
-                    if ref_file.is_file() and not ref_file.name.startswith('.'):
+                    if ref_file.is_file() and not ref_file.name.startswith("."):
                         arcname = ref_file.relative_to(skill_dir)
                         tar.add(ref_file, arcname=str(arcname))
 
             # Create and add metadata file
             metadata = {
-                'platform': 'gemini',
-                'name': skill_dir.name,
-                'version': '1.0.0',
-                'created_with': 'skill-seekers'
+                "platform": "gemini",
+                "name": skill_dir.name,
+                "version": "1.0.0",
+                "created_with": "skill-seekers",
             }
 
             # Write metadata to temp file and add to archive
             import tempfile
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp:
+
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tmp:
                 json.dump(metadata, tmp, indent=2)
                 tmp_path = tmp.name
 
@@ -153,7 +163,7 @@ See the references directory for complete documentation with examples and best p
 
         return output_path
 
-    def upload(self, package_path: Path, api_key: str, **kwargs) -> Dict[str, Any]:
+    def upload(self, package_path: Path, api_key: str, **_kwargs) -> dict[str, Any]:
         """
         Upload skill tar.gz to Gemini Files API.
 
@@ -169,18 +179,18 @@ See the references directory for complete documentation with examples and best p
         package_path = Path(package_path)
         if not package_path.exists():
             return {
-                'success': False,
-                'skill_id': None,
-                'url': None,
-                'message': f'File not found: {package_path}'
+                "success": False,
+                "skill_id": None,
+                "url": None,
+                "message": f"File not found: {package_path}",
             }
 
-        if not package_path.suffix == '.gz':
+        if package_path.suffix != ".gz":
             return {
-                'success': False,
-                'skill_id': None,
-                'url': None,
-                'message': f'Not a tar.gz file: {package_path}'
+                "success": False,
+                "skill_id": None,
+                "url": None,
+                "message": f"Not a tar.gz file: {package_path}",
             }
 
         # Check for google-generativeai library
@@ -188,10 +198,10 @@ See the references directory for complete documentation with examples and best p
             import google.generativeai as genai
         except ImportError:
             return {
-                'success': False,
-                'skill_id': None,
-                'url': None,
-                'message': 'google-generativeai library not installed. Run: pip install google-generativeai'
+                "success": False,
+                "skill_id": None,
+                "url": None,
+                "message": "google-generativeai library not installed. Run: pip install google-generativeai",
             }
 
         # Configure Gemini
@@ -200,11 +210,10 @@ See the references directory for complete documentation with examples and best p
 
             # Extract tar.gz to temp directory
             import tempfile
-            import shutil
 
             with tempfile.TemporaryDirectory() as temp_dir:
                 # Extract archive
-                with tarfile.open(package_path, 'r:gz') as tar:
+                with tarfile.open(package_path, "r:gz") as tar:
                     tar.extractall(temp_dir)
 
                 temp_path = Path(temp_dir)
@@ -213,16 +222,15 @@ See the references directory for complete documentation with examples and best p
                 main_file = temp_path / "system_instructions.md"
                 if not main_file.exists():
                     return {
-                        'success': False,
-                        'skill_id': None,
-                        'url': None,
-                        'message': 'Invalid package: system_instructions.md not found'
+                        "success": False,
+                        "skill_id": None,
+                        "url": None,
+                        "message": "Invalid package: system_instructions.md not found",
                     }
 
                 # Upload to Files API
                 uploaded_file = genai.upload_file(
-                    path=str(main_file),
-                    display_name=f"{package_path.stem}_instructions"
+                    path=str(main_file), display_name=f"{package_path.stem}_instructions"
                 )
 
                 # Upload reference files (if any)
@@ -231,24 +239,23 @@ See the references directory for complete documentation with examples and best p
                 if refs_dir.exists():
                     for ref_file in refs_dir.glob("*.md"):
                         ref_uploaded = genai.upload_file(
-                            path=str(ref_file),
-                            display_name=f"{package_path.stem}_{ref_file.stem}"
+                            path=str(ref_file), display_name=f"{package_path.stem}_{ref_file.stem}"
                         )
                         uploaded_refs.append(ref_uploaded.name)
 
             return {
-                'success': True,
-                'skill_id': uploaded_file.name,
-                'url': f"https://aistudio.google.com/app/files/{uploaded_file.name}",
-                'message': f'Skill uploaded to Google AI Studio ({len(uploaded_refs) + 1} files)'
+                "success": True,
+                "skill_id": uploaded_file.name,
+                "url": f"https://aistudio.google.com/app/files/{uploaded_file.name}",
+                "message": f"Skill uploaded to Google AI Studio ({len(uploaded_refs) + 1} files)",
             }
 
         except Exception as e:
             return {
-                'success': False,
-                'skill_id': None,
-                'url': None,
-                'message': f'Upload failed: {str(e)}'
+                "success": False,
+                "skill_id": None,
+                "url": None,
+                "message": f"Upload failed: {str(e)}",
             }
 
     def validate_api_key(self, api_key: str) -> bool:
@@ -261,7 +268,7 @@ See the references directory for complete documentation with examples and best p
         Returns:
             True if key starts with 'AIza'
         """
-        return api_key.strip().startswith('AIza')
+        return api_key.strip().startswith("AIza")
 
     def get_env_var_name(self) -> str:
         """
@@ -274,7 +281,7 @@ See the references directory for complete documentation with examples and best p
 
     def supports_enhancement(self) -> bool:
         """
-        Gemini supports AI enhancement via Gemini 2.0 Flash.
+        Gemini supports AI enhancement via Gemini 2.5 Flash.
 
         Returns:
             True
@@ -283,7 +290,7 @@ See the references directory for complete documentation with examples and best p
 
     def enhance(self, skill_dir: Path, api_key: str) -> bool:
         """
-        Enhance SKILL.md using Gemini 2.0 Flash API.
+        Enhance SKILL.md using Gemini 2.5 Flash API.
 
         Args:
             skill_dir: Path to skill directory
@@ -319,17 +326,13 @@ See the references directory for complete documentation with examples and best p
         # Read current SKILL.md
         current_skill_md = None
         if skill_md_path.exists():
-            current_skill_md = skill_md_path.read_text(encoding='utf-8')
+            current_skill_md = skill_md_path.read_text(encoding="utf-8")
             print(f"  ℹ Found existing SKILL.md ({len(current_skill_md)} chars)")
         else:
-            print(f"  ℹ No existing SKILL.md, will create new one")
+            print("  ℹ No existing SKILL.md, will create new one")
 
         # Build enhancement prompt
-        prompt = self._build_enhancement_prompt(
-            skill_dir.name,
-            references,
-            current_skill_md
-        )
+        prompt = self._build_enhancement_prompt(skill_dir.name, references, current_skill_md)
 
         print("\n🤖 Asking Gemini to enhance SKILL.md...")
         print(f"   Input: {len(prompt):,} characters")
@@ -337,7 +340,7 @@ See the references directory for complete documentation with examples and best p
         try:
             genai.configure(api_key=api_key)
 
-            model = genai.GenerativeModel('gemini-2.0-flash-exp')
+            model = genai.GenerativeModel("gemini-2.5-flash")
 
             response = model.generate_content(prompt)
 
@@ -346,13 +349,13 @@ See the references directory for complete documentation with examples and best p
 
             # Backup original
             if skill_md_path.exists():
-                backup_path = skill_md_path.with_suffix('.md.backup')
+                backup_path = skill_md_path.with_suffix(".md.backup")
                 skill_md_path.rename(backup_path)
                 print(f"  💾 Backed up original to: {backup_path.name}")
 
             # Save enhanced version
-            skill_md_path.write_text(enhanced_content, encoding='utf-8')
-            print(f"  ✅ Saved enhanced SKILL.md")
+            skill_md_path.write_text(enhanced_content, encoding="utf-8")
+            print("  ✅ Saved enhanced SKILL.md")
 
             return True
 
@@ -360,7 +363,9 @@ See the references directory for complete documentation with examples and best p
             print(f"❌ Error calling Gemini API: {e}")
             return False
 
-    def _read_reference_files(self, references_dir: Path, max_chars: int = 200000) -> Dict[str, str]:
+    def _read_reference_files(
+        self, references_dir: Path, max_chars: int = 200000
+    ) -> dict[str, str]:
         """
         Read reference markdown files from skill directory.
 
@@ -383,7 +388,7 @@ See the references directory for complete documentation with examples and best p
                 break
 
             try:
-                content = ref_file.read_text(encoding='utf-8')
+                content = ref_file.read_text(encoding="utf-8")
                 # Limit individual file size
                 if len(content) > 30000:
                     content = content[:30000] + "\n\n...(truncated)"
@@ -397,10 +402,7 @@ See the references directory for complete documentation with examples and best p
         return references
 
     def _build_enhancement_prompt(
-        self,
-        skill_name: str,
-        references: Dict[str, str],
-        current_skill_md: str = None
+        self, skill_name: str, references: dict[str, str], current_skill_md: str = None
     ) -> str:
         """
         Build Gemini API prompt for enhancement.
@@ -418,9 +420,9 @@ See the references directory for complete documentation with examples and best p
 I've scraped documentation and organized it into reference files. Your job is to create an EXCELLENT markdown documentation file that will help Gemini use this documentation effectively.
 
 CURRENT DOCUMENTATION:
-{'```markdown' if current_skill_md else '(none - create from scratch)'}
-{current_skill_md or 'No existing documentation'}
-{'```' if current_skill_md else ''}
+{"```markdown" if current_skill_md else "(none - create from scratch)"}
+{current_skill_md or "No existing documentation"}
+{"```" if current_skill_md else ""}
 
 REFERENCE DOCUMENTATION:
 """

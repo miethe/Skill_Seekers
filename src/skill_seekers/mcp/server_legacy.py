@@ -13,6 +13,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+
 import httpx
 
 # Import external MCP package
@@ -24,7 +25,8 @@ TextContent = None
 
 try:
     from mcp.server import Server
-    from mcp.types import Tool, TextContent
+    from mcp.types import TextContent, Tool
+
     MCP_AVAILABLE = True
 except ImportError as e:
     if __name__ == "__main__":
@@ -47,6 +49,7 @@ try:
 except ImportError:
     ConfigValidator = None  # Graceful degradation if not available
 
+
 # Helper decorator that works even when app is None
 def safe_decorator(decorator_func):
     """Returns the decorator if MCP is available, otherwise returns a no-op"""
@@ -56,6 +59,7 @@ def safe_decorator(decorator_func):
         # Return a decorator that just returns the function unchanged
         def noop_decorator(func):
             return func
+
         return noop_decorator
 
 
@@ -74,7 +78,7 @@ def run_subprocess_with_streaming(cmd, timeout=None):
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,  # Line buffered
-            universal_newlines=True
+            universal_newlines=True,
         )
 
         stdout_lines = []
@@ -96,6 +100,7 @@ def run_subprocess_with_streaming(cmd, timeout=None):
             # Read available output (non-blocking)
             try:
                 import select
+
                 readable, _, _ = select.select([process.stdout, process.stderr], [], [], 0.1)
 
                 if process.stdout in readable:
@@ -107,7 +112,7 @@ def run_subprocess_with_streaming(cmd, timeout=None):
                     line = process.stderr.readline()
                     if line:
                         stderr_lines.append(line)
-            except:
+            except Exception:
                 # Fallback for Windows (no select)
                 time.sleep(0.1)
 
@@ -118,8 +123,8 @@ def run_subprocess_with_streaming(cmd, timeout=None):
         if remaining_stderr:
             stderr_lines.append(remaining_stderr)
 
-        stdout = ''.join(stdout_lines)
-        stderr = ''.join(stderr_lines)
+        stdout = "".join(stdout_lines)
+        stderr = "".join(stderr_lines)
         returncode = process.returncode
 
         return stdout, stderr, returncode
@@ -662,10 +667,7 @@ async def generate_config_tool(args: dict) -> list[TextContent]:
     rate_limit = args.get("rate_limit", 0.5)
 
     # Handle unlimited mode
-    if unlimited:
-        max_pages = None
-        limit_msg = "unlimited (no page limit)"
-    elif max_pages == -1:
+    if unlimited or max_pages == -1:
         max_pages = None
         limit_msg = "unlimited (no page limit)"
     else:
@@ -676,25 +678,18 @@ async def generate_config_tool(args: dict) -> list[TextContent]:
         "name": name,
         "description": description,
         "base_url": url,
-        "selectors": {
-            "main_content": "article",
-            "title": "h1",
-            "code_blocks": "pre code"
-        },
-        "url_patterns": {
-            "include": [],
-            "exclude": []
-        },
+        "selectors": {"main_content": "article", "title": "h1", "code_blocks": "pre code"},
+        "url_patterns": {"include": [], "exclude": []},
         "categories": {},
         "rate_limit": rate_limit,
-        "max_pages": max_pages
+        "max_pages": max_pages,
     }
 
     # Save to configs directory
     config_path = Path("configs") / f"{name}.json"
     config_path.parent.mkdir(exist_ok=True)
 
-    with open(config_path, 'w') as f:
+    with open(config_path, "w") as f:
         json.dump(config, f, indent=2)
 
     result = f"""✅ Config created: {config_path}
@@ -735,10 +730,11 @@ async def estimate_pages_tool(args: dict) -> list[TextContent]:
         sys.executable,
         str(CLI_DIR / "estimate_pages.py"),
         config_path,
-        "--max-discovery", str(max_discovery)
+        "--max-discovery",
+        str(max_discovery),
     ]
 
-    progress_msg = f"🔄 Estimating page count...\n"
+    progress_msg = "🔄 Estimating page count...\n"
     progress_msg += f"⏱️ Maximum time: {timeout // 60} minutes\n\n"
 
     stdout, stderr, returncode = run_subprocess_with_streaming(cmd, timeout=timeout)
@@ -761,27 +757,27 @@ async def scrape_docs_tool(args: dict) -> list[TextContent]:
     merge_mode = args.get("merge_mode")
 
     # Load config to detect format
-    with open(config_path, 'r') as f:
+    with open(config_path) as f:
         config = json.load(f)
 
     # Detect if unified format (has 'sources' array)
-    is_unified = 'sources' in config and isinstance(config['sources'], list)
+    is_unified = "sources" in config and isinstance(config["sources"], list)
 
     # Handle unlimited mode by modifying config temporarily
     if unlimited:
         # Set max_pages to None (unlimited)
         if is_unified:
             # For unified configs, set max_pages on documentation sources
-            for source in config.get('sources', []):
-                if source.get('type') == 'documentation':
-                    source['max_pages'] = None
+            for source in config.get("sources", []):
+                if source.get("type") == "documentation":
+                    source["max_pages"] = None
         else:
             # For legacy configs
-            config['max_pages'] = None
+            config["max_pages"] = None
 
         # Create temporary config file
-        temp_config_path = config_path.replace('.json', '_unlimited_temp.json')
-        with open(temp_config_path, 'w') as f:
+        temp_config_path = config_path.replace(".json", "_unlimited_temp.json")
+        with open(temp_config_path, "w") as f:
             json.dump(config, f, indent=2)
 
         config_to_use = temp_config_path
@@ -791,19 +787,15 @@ async def scrape_docs_tool(args: dict) -> list[TextContent]:
     # Choose scraper based on format
     if is_unified:
         scraper_script = "unified_scraper.py"
-        progress_msg = f"🔄 Starting unified multi-source scraping...\n"
-        progress_msg += f"📦 Config format: Unified (multiple sources)\n"
+        progress_msg = "🔄 Starting unified multi-source scraping...\n"
+        progress_msg += "📦 Config format: Unified (multiple sources)\n"
     else:
         scraper_script = "doc_scraper.py"
-        progress_msg = f"🔄 Starting scraping process...\n"
-        progress_msg += f"📦 Config format: Legacy (single source)\n"
+        progress_msg = "🔄 Starting scraping process...\n"
+        progress_msg += "📦 Config format: Legacy (single source)\n"
 
     # Build command
-    cmd = [
-        sys.executable,
-        str(CLI_DIR / scraper_script),
-        "--config", config_to_use
-    ]
+    cmd = [sys.executable, str(CLI_DIR / scraper_script), "--config", config_to_use]
 
     # Add merge mode for unified configs
     if is_unified and merge_mode:
@@ -833,24 +825,24 @@ async def scrape_docs_tool(args: dict) -> list[TextContent]:
             if is_unified:
                 # For unified configs, estimate based on all sources
                 total_pages = 0
-                for source in config.get('sources', []):
-                    if source.get('type') == 'documentation':
-                        total_pages += source.get('max_pages', 500)
+                for source in config.get("sources", []):
+                    if source.get("type") == "documentation":
+                        total_pages += source.get("max_pages", 500)
                 max_pages = total_pages or 500
             else:
-                max_pages = config.get('max_pages', 500)
+                max_pages = config.get("max_pages", 500)
 
             # Estimate: 30s per page + buffer
             timeout = max(3600, max_pages * 35)  # Minimum 1 hour, or 35s per page
-        except:
+        except Exception:
             timeout = 14400  # Default: 4 hours
 
     # Add progress message
     if timeout:
         progress_msg += f"⏱️ Maximum time allowed: {timeout // 60} minutes\n"
     else:
-        progress_msg += f"⏱️ Unlimited mode - no timeout\n"
-    progress_msg += f"📝 Progress will be shown below:\n\n"
+        progress_msg += "⏱️ Unlimited mode - no timeout\n"
+    progress_msg += "📝 Progress will be shown below:\n\n"
 
     # Run scraper with streaming
     stdout, stderr, returncode = run_subprocess_with_streaming(cmd, timeout=timeout)
@@ -874,7 +866,7 @@ async def package_skill_tool(args: dict) -> list[TextContent]:
     auto_upload = args.get("auto_upload", True)
 
     # Check if API key exists - only upload if available
-    has_api_key = os.environ.get('ANTHROPIC_API_KEY', '').strip()
+    has_api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     should_upload = auto_upload and has_api_key
 
     # Run package_skill.py
@@ -883,7 +875,7 @@ async def package_skill_tool(args: dict) -> list[TextContent]:
         str(CLI_DIR / "package_skill.py"),
         skill_dir,
         "--no-open",  # Don't open folder in MCP context
-        "--skip-quality-check"  # Skip interactive quality checks in MCP context
+        "--skip-quality-check",  # Skip interactive quality checks in MCP context
     ]
 
     # Add upload flag only if we have API key
@@ -934,11 +926,7 @@ async def upload_skill_tool(args: dict) -> list[TextContent]:
     skill_zip = args["skill_zip"]
 
     # Run upload_skill.py
-    cmd = [
-        sys.executable,
-        str(CLI_DIR / "upload_skill.py"),
-        skill_zip
-    ]
+    cmd = [sys.executable, str(CLI_DIR / "upload_skill.py"), skill_zip]
 
     # Timeout: 5 minutes for upload
     timeout = 300
@@ -956,7 +944,7 @@ async def upload_skill_tool(args: dict) -> list[TextContent]:
         return [TextContent(type="text", text=f"{output}\n\n❌ Error:\n{stderr}")]
 
 
-async def list_configs_tool(args: dict) -> list[TextContent]:
+async def list_configs_tool(_args: dict) -> list[TextContent]:
     """List available configs"""
     configs_dir = Path("configs")
 
@@ -998,41 +986,46 @@ async def validate_config_tool(args: dict) -> list[TextContent]:
     try:
         # Check if file exists
         if not Path(config_path).exists():
-            return [TextContent(type="text", text=f"❌ Error: Config file not found: {config_path}")]
+            return [
+                TextContent(type="text", text=f"❌ Error: Config file not found: {config_path}")
+            ]
 
         # Try unified config validator first
         try:
             from config_validator import validate_config
+
             validator = validate_config(config_path)
 
-            result = f"✅ Config is valid!\n\n"
+            result = "✅ Config is valid!\n\n"
 
             # Show format
             if validator.is_unified:
-                result += f"📦 Format: Unified (multi-source)\n"
+                result += "📦 Format: Unified (multi-source)\n"
                 result += f"  Name: {validator.config['name']}\n"
                 result += f"  Sources: {len(validator.config.get('sources', []))}\n"
 
                 # Show sources
-                for i, source in enumerate(validator.config.get('sources', []), 1):
+                for i, source in enumerate(validator.config.get("sources", []), 1):
                     result += f"\n  Source {i}: {source['type']}\n"
-                    if source['type'] == 'documentation':
+                    if source["type"] == "documentation":
                         result += f"    URL: {source.get('base_url', 'N/A')}\n"
                         result += f"    Max pages: {source.get('max_pages', 'Not set')}\n"
-                    elif source['type'] == 'github':
+                    elif source["type"] == "github":
                         result += f"    Repo: {source.get('repo', 'N/A')}\n"
-                        result += f"    Code depth: {source.get('code_analysis_depth', 'surface')}\n"
-                    elif source['type'] == 'pdf':
+                        result += (
+                            f"    Code depth: {source.get('code_analysis_depth', 'surface')}\n"
+                        )
+                    elif source["type"] == "pdf":
                         result += f"    Path: {source.get('path', 'N/A')}\n"
 
                 # Show merge settings if applicable
                 if validator.needs_api_merge():
-                    merge_mode = validator.config.get('merge_mode', 'rule-based')
+                    merge_mode = validator.config.get("merge_mode", "rule-based")
                     result += f"\n  Merge mode: {merge_mode}\n"
-                    result += f"  API merging: Required (docs + code sources)\n"
+                    result += "  API merging: Required (docs + code sources)\n"
 
             else:
-                result += f"📦 Format: Legacy (single source)\n"
+                result += "📦 Format: Legacy (single source)\n"
                 result += f"  Name: {validator.config['name']}\n"
                 result += f"  Base URL: {validator.config.get('base_url', 'N/A')}\n"
                 result += f"  Max pages: {validator.config.get('max_pages', 'Not set')}\n"
@@ -1042,29 +1035,30 @@ async def validate_config_tool(args: dict) -> list[TextContent]:
 
         except ImportError:
             # Fall back to legacy validation
-            from doc_scraper import validate_config
             import json
 
-            with open(config_path, 'r') as f:
+            from doc_scraper import validate_config
+
+            with open(config_path) as f:
                 config = json.load(f)
 
             # Validate config - returns (errors, warnings) tuple
             errors, warnings = validate_config(config)
 
             if errors:
-                result = f"❌ Config validation failed:\n\n"
+                result = "❌ Config validation failed:\n\n"
                 for error in errors:
                     result += f"  • {error}\n"
             else:
-                result = f"✅ Config is valid!\n\n"
-                result += f"📦 Format: Legacy (single source)\n"
+                result = "✅ Config is valid!\n\n"
+                result += "📦 Format: Legacy (single source)\n"
                 result += f"  Name: {config['name']}\n"
                 result += f"  Base URL: {config['base_url']}\n"
                 result += f"  Max pages: {config.get('max_pages', 'Not set')}\n"
                 result += f"  Rate limit: {config.get('rate_limit', 'Not set')}s\n"
 
                 if warnings:
-                    result += f"\n⚠️  Warnings:\n"
+                    result += "\n⚠️  Warnings:\n"
                     for warning in warnings:
                         result += f"  • {warning}\n"
 
@@ -1086,8 +1080,10 @@ async def split_config_tool(args: dict) -> list[TextContent]:
         sys.executable,
         str(CLI_DIR / "split_config.py"),
         config_path,
-        "--strategy", strategy,
-        "--target-pages", str(target_pages)
+        "--strategy",
+        strategy,
+        "--target-pages",
+        str(target_pages),
     ]
 
     if dry_run:
@@ -1120,7 +1116,9 @@ async def generate_router_tool(args: dict) -> list[TextContent]:
     config_files = glob.glob(config_pattern)
 
     if not config_files:
-        return [TextContent(type="text", text=f"❌ No config files match pattern: {config_pattern}")]
+        return [
+            TextContent(type="text", text=f"❌ No config files match pattern: {config_pattern}")
+        ]
 
     # Run generate_router.py
     cmd = [
@@ -1173,7 +1171,11 @@ async def scrape_pdf_tool(args: dict) -> list[TextContent]:
         cmd.extend(["--from-json", from_json])
 
     else:
-        return [TextContent(type="text", text="❌ Error: Must specify --config, --pdf + --name, or --from-json")]
+        return [
+            TextContent(
+                type="text", text="❌ Error: Must specify --config, --pdf + --name, or --from-json"
+            )
+        ]
 
     # Run pdf_scraper.py with streaming (can take a while)
     timeout = 600  # 10 minutes for PDF extraction
@@ -1271,7 +1273,12 @@ async def fetch_config_tool(args: dict) -> list[TextContent]:
         # MODE 1: Named Source (highest priority)
         if source_name:
             if not config_name:
-                return [TextContent(type="text", text="❌ Error: config_name is required when using source parameter")]
+                return [
+                    TextContent(
+                        type="text",
+                        text="❌ Error: config_name is required when using source parameter",
+                    )
+                ]
 
             # Get source from registry
             source_manager = SourceManager()
@@ -1296,7 +1303,7 @@ async def fetch_config_tool(args: dict) -> list[TextContent]:
                     git_url=git_url,
                     branch=branch,
                     token=token,
-                    force_refresh=force_refresh
+                    force_refresh=force_refresh,
                 )
             except Exception as e:
                 return [TextContent(type="text", text=f"❌ Git error: {str(e)}")]
@@ -1314,7 +1321,7 @@ async def fetch_config_tool(args: dict) -> list[TextContent]:
             dest_path.mkdir(parents=True, exist_ok=True)
             config_file = dest_path / f"{config_name}.json"
 
-            with open(config_file, 'w') as f:
+            with open(config_file, "w") as f:
                 json.dump(config_data, f, indent=2)
 
             result = f"""✅ Config fetched from git source successfully!
@@ -1324,7 +1331,7 @@ async def fetch_config_tool(args: dict) -> list[TextContent]:
 🔗 Source: {source_name}
 🌿 Branch: {branch}
 📁 Repository: {git_url}
-🔄 Refreshed: {'Yes (forced)' if force_refresh else 'No (used cache)'}
+🔄 Refreshed: {"Yes (forced)" if force_refresh else "No (used cache)"}
 
 Next steps:
   1. Review config: cat {config_file}
@@ -1338,7 +1345,12 @@ Next steps:
         # MODE 2: Direct Git URL
         elif git_url:
             if not config_name:
-                return [TextContent(type="text", text="❌ Error: config_name is required when using git_url parameter")]
+                return [
+                    TextContent(
+                        type="text",
+                        text="❌ Error: config_name is required when using git_url parameter",
+                    )
+                ]
 
             # Clone/pull repository
             git_repo = GitConfigRepo()
@@ -1350,7 +1362,7 @@ Next steps:
                     git_url=git_url,
                     branch=branch,
                     token=token,
-                    force_refresh=force_refresh
+                    force_refresh=force_refresh,
                 )
             except ValueError as e:
                 return [TextContent(type="text", text=f"❌ Invalid git URL: {str(e)}")]
@@ -1370,7 +1382,7 @@ Next steps:
             dest_path.mkdir(parents=True, exist_ok=True)
             config_file = dest_path / f"{config_name}.json"
 
-            with open(config_file, 'w') as f:
+            with open(config_file, "w") as f:
                 json.dump(config_data, f, indent=2)
 
             result = f"""✅ Config fetched from git URL successfully!
@@ -1379,7 +1391,7 @@ Next steps:
 📂 Saved to: {config_file}
 📁 Repository: {git_url}
 🌿 Branch: {branch}
-🔄 Refreshed: {'Yes (forced)' if force_refresh else 'No (used cache)'}
+🔄 Refreshed: {"Yes (forced)" if force_refresh else "No (used cache)"}
 
 Next steps:
   1. Review config: cat {config_file}
@@ -1436,27 +1448,47 @@ Next steps:
                             if tags:
                                 result += f"    Tags: {tags}\n"
 
-                    result += f"\n💡 To download a config, use: fetch_config with config_name='<name>'\n"
+                    result += (
+                        "\n💡 To download a config, use: fetch_config with config_name='<name>'\n"
+                    )
                     result += f"📚 API Docs: {API_BASE_URL}/docs\n"
 
                     return [TextContent(type="text", text=result)]
 
                 # Download specific config
                 if not config_name:
-                    return [TextContent(type="text", text="❌ Error: Please provide config_name or set list_available=true")]
+                    return [
+                        TextContent(
+                            type="text",
+                            text="❌ Error: Please provide config_name or set list_available=true",
+                        )
+                    ]
 
                 # Get config details first
                 detail_url = f"{API_BASE_URL}/api/configs/{config_name}"
                 detail_response = await client.get(detail_url)
 
                 if detail_response.status_code == 404:
-                    return [TextContent(type="text", text=f"❌ Config '{config_name}' not found. Use list_available=true to see available configs.")]
+                    return [
+                        TextContent(
+                            type="text",
+                            text=f"❌ Config '{config_name}' not found. Use list_available=true to see available configs.",
+                        )
+                    ]
 
                 detail_response.raise_for_status()
                 config_info = detail_response.json()
 
-                # Download the actual config file
-                download_url = f"{API_BASE_URL}/api/download/{config_name}.json"
+                # Download the actual config file using the download_url from API response
+                download_url = config_info.get("download_url")
+                if not download_url:
+                    return [
+                        TextContent(
+                            type="text",
+                            text=f"❌ Config '{config_name}' has no download_url. Contact support.",
+                        )
+                    ]
+
                 download_response = await client.get(download_url)
                 download_response.raise_for_status()
                 config_data = download_response.json()
@@ -1466,7 +1498,7 @@ Next steps:
                 dest_path.mkdir(parents=True, exist_ok=True)
                 config_file = dest_path / f"{config_name}.json"
 
-                with open(config_file, 'w') as f:
+                with open(config_file, "w") as f:
                     json.dump(config_data, f, indent=2)
 
                 # Build result message
@@ -1474,15 +1506,15 @@ Next steps:
 
 📦 Config: {config_name}
 📂 Saved to: {config_file}
-📊 Category: {config_info.get('category', 'uncategorized')}
-🏷️  Tags: {', '.join(config_info.get('tags', []))}
-📄 Type: {config_info.get('type', 'unknown')}
-📝 Description: {config_info.get('description', 'No description')}
+📊 Category: {config_info.get("category", "uncategorized")}
+🏷️  Tags: {", ".join(config_info.get("tags", []))}
+📄 Type: {config_info.get("type", "unknown")}
+📝 Description: {config_info.get("description", "No description")}
 
-🔗 Source: {config_info.get('primary_source', 'N/A')}
-📏 Max pages: {config_info.get('max_pages', 'N/A')}
-📦 File size: {config_info.get('file_size', 'N/A')} bytes
-🕒 Last updated: {config_info.get('last_updated', 'N/A')}
+🔗 Source: {config_info.get("primary_source", "N/A")}
+📏 Max pages: {config_info.get("max_pages", "N/A")}
+📦 File size: {config_info.get("file_size", "N/A")} bytes
+🕒 Last updated: {config_info.get("last_updated", "N/A")}
 
 Next steps:
   1. Review config: cat {config_file}
@@ -1495,9 +1527,16 @@ Next steps:
                 return [TextContent(type="text", text=result)]
 
     except httpx.HTTPError as e:
-        return [TextContent(type="text", text=f"❌ HTTP Error: {str(e)}\n\nCheck your internet connection or try again later.")]
+        return [
+            TextContent(
+                type="text",
+                text=f"❌ HTTP Error: {str(e)}\n\nCheck your internet connection or try again later.",
+            )
+        ]
     except json.JSONDecodeError as e:
-        return [TextContent(type="text", text=f"❌ JSON Error: Invalid response from API: {str(e)}")]
+        return [
+            TextContent(type="text", text=f"❌ JSON Error: Invalid response from API: {str(e)}")
+        ]
     except Exception as e:
         return [TextContent(type="text", text=f"❌ Error: {str(e)}")]
 
@@ -1537,16 +1576,20 @@ async def install_skill_tool(args: dict) -> list[TextContent]:
 
     # Validation: Must provide exactly one of config_name or config_path
     if not config_name and not config_path:
-        return [TextContent(
-            type="text",
-            text="❌ Error: Must provide either config_name or config_path\n\nExamples:\n  install_skill(config_name='react')\n  install_skill(config_path='configs/custom.json')"
-        )]
+        return [
+            TextContent(
+                type="text",
+                text="❌ Error: Must provide either config_name or config_path\n\nExamples:\n  install_skill(config_name='react')\n  install_skill(config_path='configs/custom.json')",
+            )
+        ]
 
     if config_name and config_path:
-        return [TextContent(
-            type="text",
-            text="❌ Error: Cannot provide both config_name and config_path\n\nChoose one:\n  - config_name: Fetch from API (e.g., 'react')\n  - config_path: Use existing file (e.g., 'configs/custom.json')"
-        )]
+        return [
+            TextContent(
+                type="text",
+                text="❌ Error: Cannot provide both config_name and config_path\n\nChoose one:\n  - config_name: Fetch from API (e.g., 'react')\n  - config_path: Use existing file (e.g., 'configs/custom.json')",
+            )
+        ]
 
     # Initialize output
     output_lines = []
@@ -1560,11 +1603,11 @@ async def install_skill_tool(args: dict) -> list[TextContent]:
 
     # Track workflow state
     workflow_state = {
-        'config_path': config_path,
-        'skill_name': None,
-        'skill_dir': None,
-        'zip_path': None,
-        'phases_completed': []
+        "config_path": config_path,
+        "skill_name": None,
+        "skill_dir": None,
+        "zip_path": None,
+        "phases_completed": [],
     }
 
     try:
@@ -1578,10 +1621,9 @@ async def install_skill_tool(args: dict) -> list[TextContent]:
 
             if not dry_run:
                 # Call fetch_config_tool directly
-                fetch_result = await fetch_config_tool({
-                    "config_name": config_name,
-                    "destination": destination
-                })
+                fetch_result = await fetch_config_tool(
+                    {"config_name": config_name, "destination": destination}
+                )
 
                 # Parse result to extract config path
                 fetch_output = fetch_result[0].text
@@ -1592,15 +1634,20 @@ async def install_skill_tool(args: dict) -> list[TextContent]:
                 # Expected format: "✅ Config saved to: configs/react.json"
                 match = re.search(r"saved to:\s*(.+\.json)", fetch_output)
                 if match:
-                    workflow_state['config_path'] = match.group(1).strip()
+                    workflow_state["config_path"] = match.group(1).strip()
                     output_lines.append(f"✅ Config fetched: {workflow_state['config_path']}")
                 else:
-                    return [TextContent(type="text", text="\n".join(output_lines) + "\n\n❌ Failed to fetch config")]
+                    return [
+                        TextContent(
+                            type="text",
+                            text="\n".join(output_lines) + "\n\n❌ Failed to fetch config",
+                        )
+                    ]
 
-                workflow_state['phases_completed'].append('fetch_config')
+                workflow_state["phases_completed"].append("fetch_config")
             else:
                 output_lines.append("  [DRY RUN] Would fetch config from API")
-                workflow_state['config_path'] = f"{destination}/{config_name}.json"
+                workflow_state["config_path"] = f"{destination}/{config_name}.json"
 
             output_lines.append("")
 
@@ -1615,23 +1662,30 @@ async def install_skill_tool(args: dict) -> list[TextContent]:
         if not dry_run:
             # Load config to get skill name
             try:
-                with open(workflow_state['config_path'], 'r') as f:
+                with open(workflow_state["config_path"]) as f:
                     config = json.load(f)
-                    workflow_state['skill_name'] = config.get('name', 'unknown')
+                    workflow_state["skill_name"] = config.get("name", "unknown")
             except Exception as e:
-                return [TextContent(type="text", text="\n".join(output_lines) + f"\n\n❌ Failed to read config: {str(e)}")]
+                return [
+                    TextContent(
+                        type="text",
+                        text="\n".join(output_lines) + f"\n\n❌ Failed to read config: {str(e)}",
+                    )
+                ]
 
             # Call scrape_docs_tool (does NOT include enhancement)
             output_lines.append("Scraping documentation (this may take 20-45 minutes)...")
             output_lines.append("")
 
-            scrape_result = await scrape_docs_tool({
-                "config_path": workflow_state['config_path'],
-                "unlimited": unlimited,
-                "enhance_local": False,  # Enhancement is separate phase
-                "skip_scrape": False,
-                "dry_run": False
-            })
+            scrape_result = await scrape_docs_tool(
+                {
+                    "config_path": workflow_state["config_path"],
+                    "unlimited": unlimited,
+                    "enhance_local": False,  # Enhancement is separate phase
+                    "skip_scrape": False,
+                    "dry_run": False,
+                }
+            )
 
             scrape_output = scrape_result[0].text
             output_lines.append(scrape_output)
@@ -1639,14 +1693,19 @@ async def install_skill_tool(args: dict) -> list[TextContent]:
 
             # Check for success
             if "❌" in scrape_output:
-                return [TextContent(type="text", text="\n".join(output_lines) + "\n\n❌ Scraping failed - see error above")]
+                return [
+                    TextContent(
+                        type="text",
+                        text="\n".join(output_lines) + "\n\n❌ Scraping failed - see error above",
+                    )
+                ]
 
-            workflow_state['skill_dir'] = f"{destination}/{workflow_state['skill_name']}"
-            workflow_state['phases_completed'].append('scrape_docs')
+            workflow_state["skill_dir"] = f"{destination}/{workflow_state['skill_name']}"
+            workflow_state["phases_completed"].append("scrape_docs")
         else:
             output_lines.append("  [DRY RUN] Would scrape documentation")
-            workflow_state['skill_name'] = "example"
-            workflow_state['skill_dir'] = f"{destination}/example"
+            workflow_state["skill_name"] = "example"
+            workflow_state["skill_dir"] = f"{destination}/example"
 
         output_lines.append("")
 
@@ -1666,7 +1725,7 @@ async def install_skill_tool(args: dict) -> list[TextContent]:
             cmd = [
                 sys.executable,
                 str(CLI_DIR / "enhance_skill_local.py"),
-                workflow_state['skill_dir']
+                workflow_state["skill_dir"],
                 # Headless is default, no flag needed
             ]
 
@@ -1682,7 +1741,7 @@ async def install_skill_tool(args: dict) -> list[TextContent]:
                 return [TextContent(type="text", text="\n".join(output_lines))]
 
             output_lines.append(stdout)
-            workflow_state['phases_completed'].append('enhance_skill')
+            workflow_state["phases_completed"].append("enhance_skill")
         else:
             output_lines.append("  [DRY RUN] Would enhance SKILL.md with Claude Code")
 
@@ -1697,10 +1756,12 @@ async def install_skill_tool(args: dict) -> list[TextContent]:
 
         if not dry_run:
             # Call package_skill_tool (auto_upload=False, we handle upload separately)
-            package_result = await package_skill_tool({
-                "skill_dir": workflow_state['skill_dir'],
-                "auto_upload": False  # We handle upload in next phase
-            })
+            package_result = await package_skill_tool(
+                {
+                    "skill_dir": workflow_state["skill_dir"],
+                    "auto_upload": False,  # We handle upload in next phase
+                }
+            )
 
             package_output = package_result[0].text
             output_lines.append(package_output)
@@ -1710,15 +1771,15 @@ async def install_skill_tool(args: dict) -> list[TextContent]:
             # Expected format: "Saved to: output/react.zip"
             match = re.search(r"Saved to:\s*(.+\.zip)", package_output)
             if match:
-                workflow_state['zip_path'] = match.group(1).strip()
+                workflow_state["zip_path"] = match.group(1).strip()
             else:
                 # Fallback: construct zip path
-                workflow_state['zip_path'] = f"{destination}/{workflow_state['skill_name']}.zip"
+                workflow_state["zip_path"] = f"{destination}/{workflow_state['skill_name']}.zip"
 
-            workflow_state['phases_completed'].append('package_skill')
+            workflow_state["phases_completed"].append("package_skill")
         else:
             output_lines.append("  [DRY RUN] Would package to .zip file")
-            workflow_state['zip_path'] = f"{destination}/{workflow_state['skill_name']}.zip"
+            workflow_state["zip_path"] = f"{destination}/{workflow_state['skill_name']}.zip"
 
         output_lines.append("")
 
@@ -1731,19 +1792,19 @@ async def install_skill_tool(args: dict) -> list[TextContent]:
             output_lines.append("")
 
             # Check for API key
-            has_api_key = os.environ.get('ANTHROPIC_API_KEY', '').strip()
+            has_api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
 
             if not dry_run:
                 if has_api_key:
                     # Call upload_skill_tool
-                    upload_result = await upload_skill_tool({
-                        "skill_zip": workflow_state['zip_path']
-                    })
+                    upload_result = await upload_skill_tool(
+                        {"skill_zip": workflow_state["zip_path"]}
+                    )
 
                     upload_output = upload_result[0].text
                     output_lines.append(upload_output)
 
-                    workflow_state['phases_completed'].append('upload_skill')
+                    workflow_state["phases_completed"].append("upload_skill")
                 else:
                     output_lines.append("⚠️  ANTHROPIC_API_KEY not set - skipping upload")
                     output_lines.append("")
@@ -1768,13 +1829,13 @@ async def install_skill_tool(args: dict) -> list[TextContent]:
 
         if not dry_run:
             output_lines.append("Phases completed:")
-            for phase in workflow_state['phases_completed']:
+            for phase in workflow_state["phases_completed"]:
                 output_lines.append(f"  ✓ {phase}")
             output_lines.append("")
 
             output_lines.append("📁 Output:")
             output_lines.append(f"  Skill directory: {workflow_state['skill_dir']}")
-            if workflow_state['zip_path']:
+            if workflow_state["zip_path"]:
                 output_lines.append(f"  Skill package: {workflow_state['zip_path']}")
             output_lines.append("")
 
@@ -1785,7 +1846,7 @@ async def install_skill_tool(args: dict) -> list[TextContent]:
                 output_lines.append("📝 Manual upload required (see instructions above)")
             else:
                 output_lines.append("📤 To upload:")
-                output_lines.append("   skill-seekers upload " + workflow_state['zip_path'])
+                output_lines.append("   skill-seekers upload " + workflow_state["zip_path"])
         else:
             output_lines.append("This was a dry run. No actions were taken.")
             output_lines.append("")
@@ -1802,7 +1863,7 @@ async def install_skill_tool(args: dict) -> list[TextContent]:
         output_lines.append(f"❌ Workflow failed: {str(e)}")
         output_lines.append("")
         output_lines.append("Phases completed before failure:")
-        for phase in workflow_state['phases_completed']:
+        for phase in workflow_state["phases_completed"]:
             output_lines.append(f"  ✓ {phase}")
         return [TextContent(type="text", text="\n".join(output_lines))]
 
@@ -1812,7 +1873,12 @@ async def submit_config_tool(args: dict) -> list[TextContent]:
     try:
         from github import Github, GithubException
     except ImportError:
-        return [TextContent(type="text", text="❌ Error: PyGithub not installed.\n\nInstall with: pip install PyGithub")]
+        return [
+            TextContent(
+                type="text",
+                text="❌ Error: PyGithub not installed.\n\nInstall with: pip install PyGithub",
+            )
+        ]
 
     config_path = args.get("config_path")
     config_json_str = args.get("config_json")
@@ -1824,9 +1890,11 @@ async def submit_config_tool(args: dict) -> list[TextContent]:
         if config_path:
             config_file = Path(config_path)
             if not config_file.exists():
-                return [TextContent(type="text", text=f"❌ Error: Config file not found: {config_path}")]
+                return [
+                    TextContent(type="text", text=f"❌ Error: Config file not found: {config_path}")
+                ]
 
-            with open(config_file, 'r') as f:
+            with open(config_file) as f:
                 config_data = json.load(f)
                 config_json_str = json.dumps(config_data, indent=2)
                 config_name = config_data.get("name", config_file.stem)
@@ -1839,11 +1907,20 @@ async def submit_config_tool(args: dict) -> list[TextContent]:
                 return [TextContent(type="text", text=f"❌ Error: Invalid JSON: {str(e)}")]
 
         else:
-            return [TextContent(type="text", text="❌ Error: Must provide either config_path or config_json")]
+            return [
+                TextContent(
+                    type="text", text="❌ Error: Must provide either config_path or config_json"
+                )
+            ]
 
         # Use ConfigValidator for comprehensive validation
         if ConfigValidator is None:
-            return [TextContent(type="text", text="❌ Error: ConfigValidator not available. Please ensure config_validator.py is in the CLI directory.")]
+            return [
+                TextContent(
+                    type="text",
+                    text="❌ Error: ConfigValidator not available. Please ensure config_validator.py is in the CLI directory.",
+                )
+            ]
 
         try:
             validator = ConfigValidator(config_data)
@@ -1855,22 +1932,32 @@ async def submit_config_tool(args: dict) -> list[TextContent]:
 
             # Additional format validation (ConfigValidator only checks structure)
             # Validate name format (alphanumeric, hyphens, underscores only)
-            if not re.match(r'^[a-zA-Z0-9_-]+$', config_name):
-                raise ValueError(f"Invalid name format: '{config_name}'\nNames must contain only alphanumeric characters, hyphens, and underscores")
+            if not re.match(r"^[a-zA-Z0-9_-]+$", config_name):
+                raise ValueError(
+                    f"Invalid name format: '{config_name}'\nNames must contain only alphanumeric characters, hyphens, and underscores"
+                )
 
             # Validate URL formats
             if not is_unified:
                 # Legacy config - check base_url
-                base_url = config_data.get('base_url', '')
-                if base_url and not (base_url.startswith('http://') or base_url.startswith('https://')):
-                    raise ValueError(f"Invalid base_url format: '{base_url}'\nURLs must start with http:// or https://")
+                base_url = config_data.get("base_url", "")
+                if base_url and not (
+                    base_url.startswith("http://") or base_url.startswith("https://")
+                ):
+                    raise ValueError(
+                        f"Invalid base_url format: '{base_url}'\nURLs must start with http:// or https://"
+                    )
             else:
                 # Unified config - check URLs in sources
-                for idx, source in enumerate(config_data.get('sources', [])):
-                    if source.get('type') == 'documentation':
-                        source_url = source.get('base_url', '')
-                        if source_url and not (source_url.startswith('http://') or source_url.startswith('https://')):
-                            raise ValueError(f"Source {idx} (documentation): Invalid base_url format: '{source_url}'\nURLs must start with http:// or https://")
+                for idx, source in enumerate(config_data.get("sources", [])):
+                    if source.get("type") == "documentation":
+                        source_url = source.get("base_url", "")
+                        if source_url and not (
+                            source_url.startswith("http://") or source_url.startswith("https://")
+                        ):
+                            raise ValueError(
+                                f"Source {idx} (documentation): Invalid base_url format: '{source_url}'\nURLs must start with http:// or https://"
+                            )
 
         except ValueError as validation_error:
             # Provide detailed validation feedback
@@ -1894,12 +1981,14 @@ Please fix these issues and try again.
         # Detect category based on config format and content
         if is_unified:
             # For unified configs, look at source types
-            source_types = [src.get('type') for src in config_data.get('sources', [])]
-            if 'documentation' in source_types and 'github' in source_types:
-                category = "multi-source"
-            elif 'documentation' in source_types and 'pdf' in source_types:
-                category = "multi-source"
-            elif len(source_types) > 1:
+            source_types = [src.get("type") for src in config_data.get("sources", [])]
+            if (
+                "documentation" in source_types
+                and "github" in source_types
+                or "documentation" in source_types
+                and "pdf" in source_types
+                or len(source_types) > 1
+            ):
                 category = "multi-source"
             else:
                 category = "unified"
@@ -1907,7 +1996,10 @@ Please fix these issues and try again.
             # For legacy configs, use name-based detection
             name_lower = config_name.lower()
             category = "other"
-            if any(x in name_lower for x in ["react", "vue", "django", "laravel", "fastapi", "astro", "hono"]):
+            if any(
+                x in name_lower
+                for x in ["react", "vue", "django", "laravel", "fastapi", "astro", "hono"]
+            ):
                 category = "web-frameworks"
             elif any(x in name_lower for x in ["godot", "unity", "unreal"]):
                 category = "game-engines"
@@ -1920,21 +2012,30 @@ Please fix these issues and try again.
         warnings = []
         if not is_unified:
             # Legacy config warnings
-            if 'max_pages' not in config_data:
+            if "max_pages" not in config_data:
                 warnings.append("⚠️ No max_pages set - will use default (100)")
-            elif config_data.get('max_pages') in (None, -1):
-                warnings.append("⚠️ Unlimited scraping enabled - may scrape thousands of pages and take hours")
+            elif config_data.get("max_pages") in (None, -1):
+                warnings.append(
+                    "⚠️ Unlimited scraping enabled - may scrape thousands of pages and take hours"
+                )
         else:
             # Unified config warnings
-            for src in config_data.get('sources', []):
-                if src.get('type') == 'documentation' and 'max_pages' not in src:
-                    warnings.append(f"⚠️ No max_pages set for documentation source - will use default (100)")
-                elif src.get('type') == 'documentation' and src.get('max_pages') in (None, -1):
-                    warnings.append(f"⚠️ Unlimited scraping enabled for documentation source")
+            for src in config_data.get("sources", []):
+                if src.get("type") == "documentation" and "max_pages" not in src:
+                    warnings.append(
+                        "⚠️ No max_pages set for documentation source - will use default (100)"
+                    )
+                elif src.get("type") == "documentation" and src.get("max_pages") in (None, -1):
+                    warnings.append("⚠️ Unlimited scraping enabled for documentation source")
 
         # Check for GitHub token
         if not github_token:
-            return [TextContent(type="text", text="❌ Error: GitHub token required.\n\nProvide github_token parameter or set GITHUB_TOKEN environment variable.\n\nCreate token at: https://github.com/settings/tokens")]
+            return [
+                TextContent(
+                    type="text",
+                    text="❌ Error: GitHub token required.\n\nProvide github_token parameter or set GITHUB_TOKEN environment variable.\n\nCreate token at: https://github.com/settings/tokens",
+                )
+            ]
 
         # Create GitHub issue
         try:
@@ -1962,7 +2063,7 @@ Please fix these issues and try again.
 {testing_notes if testing_notes else "Not provided"}
 
 ### Documentation URL
-{config_data.get('base_url') if not is_unified else 'See sources in config'}
+{config_data.get("base_url") if not is_unified else "See sources in config"}
 
 {"### Validation Warnings" if warnings else ""}
 {chr(10).join(f"- {w}" for w in warnings) if warnings else ""}
@@ -1980,7 +2081,7 @@ Please fix these issues and try again.
             issue = repo.create_issue(
                 title=f"[CONFIG] {config_name}",
                 body=issue_body,
-                labels=["config-submission", "needs-review"]
+                labels=["config-submission", "needs-review"],
             )
 
             result = f"""✅ Config submitted successfully!
@@ -2004,7 +2105,12 @@ What happens next:
             return [TextContent(type="text", text=result)]
 
         except GithubException as e:
-            return [TextContent(type="text", text=f"❌ GitHub Error: {str(e)}\n\nCheck your token permissions (needs 'repo' or 'public_repo' scope).")]
+            return [
+                TextContent(
+                    type="text",
+                    text=f"❌ GitHub Error: {str(e)}\n\nCheck your token permissions (needs 'repo' or 'public_repo' scope).",
+                )
+            ]
 
     except Exception as e:
         return [TextContent(type="text", text=f"❌ Error: {str(e)}")]
@@ -2038,34 +2144,34 @@ async def add_config_source_tool(args: dict) -> list[TextContent]:
             token_env=token_env,
             branch=branch,
             priority=priority,
-            enabled=enabled
+            enabled=enabled,
         )
 
         # Check if this is an update
         is_update = "updated_at" in source and source["added_at"] != source["updated_at"]
 
-        result = f"""✅ Config source {'updated' if is_update else 'registered'} successfully!
+        result = f"""✅ Config source {"updated" if is_update else "registered"} successfully!
 
-📛 Name: {source['name']}
-📁 Repository: {source['git_url']}
-🔖 Type: {source['type']}
-🌿 Branch: {source['branch']}
-🔑 Token env: {source.get('token_env', 'None')}
-⚡ Priority: {source['priority']} (lower = higher priority)
-✓ Enabled: {source['enabled']}
-🕒 Added: {source['added_at'][:19]}
+📛 Name: {source["name"]}
+📁 Repository: {source["git_url"]}
+🔖 Type: {source["type"]}
+🌿 Branch: {source["branch"]}
+🔑 Token env: {source.get("token_env", "None")}
+⚡ Priority: {source["priority"]} (lower = higher priority)
+✓ Enabled: {source["enabled"]}
+🕒 Added: {source["added_at"][:19]}
 
 Usage:
   # Fetch config from this source
-  fetch_config(source="{source['name']}", config_name="your-config")
+  fetch_config(source="{source["name"]}", config_name="your-config")
 
   # List all sources
   list_config_sources()
 
   # Remove this source
-  remove_config_source(name="{source['name']}")
+  remove_config_source(name="{source["name"]}")
 
-💡 Make sure to set {source.get('token_env', 'GIT_TOKEN')} environment variable for private repos
+💡 Make sure to set {source.get("token_env", "GIT_TOKEN")} environment variable for private repos
 """
 
         return [TextContent(type="text", text=result)]
@@ -2169,7 +2275,7 @@ Next steps:
 
             result = f"""❌ Source '{name}' not found
 
-Available sources: {', '.join(available) if available else 'none'}
+Available sources: {", ".join(available) if available else "none"}
 
 To see all sources:
   list_config_sources()
@@ -2189,11 +2295,7 @@ async def main():
     from mcp.server.stdio import stdio_server
 
     async with stdio_server() as (read_stream, write_stream):
-        await app.run(
-            read_stream,
-            write_stream,
-            app.create_initialization_options()
-        )
+        await app.run(read_stream, write_stream, app.create_initialization_options())
 
 
 if __name__ == "__main__":
