@@ -92,3 +92,19 @@ def pytest_configure(config):  # noqa: ARG001
 def anyio_backend():
     """Override anyio backend to only use asyncio (not trio)."""
     return "asyncio"
+
+
+@pytest.fixture(scope="session")
+def bootstrap_uv_env(tmp_path_factory):
+    """Env for running scripts/bootstrap_skill.sh (its `uv sync` / `uv run`).
+
+    Without this, `uv sync` re-syncs the project's own .venv -- usually the very
+    interpreter running pytest -- to the lockfile's default set, uninstalling
+    packages (mcp, mammoth, ...) mid-session so later tests silently skip.
+    UV_FROZEN keeps it from rewriting the tracked uv.lock as well.
+    """
+    env = os.environ.copy()
+    env["UV_PROJECT_ENVIRONMENT"] = str(tmp_path_factory.mktemp("bootstrap-uv-env") / ".venv")
+    env["UV_FROZEN"] = "1"
+    env.pop("VIRTUAL_ENV", None)
+    return env

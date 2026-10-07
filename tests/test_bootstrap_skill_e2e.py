@@ -22,7 +22,6 @@ Run with venv tests:
     pytest tests/test_bootstrap_skill_e2e.py -v -m "venv"
 """
 
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -34,22 +33,6 @@ import pytest
 def project_root():
     """Get project root directory."""
     return Path(__file__).parent.parent
-
-
-@pytest.fixture(scope="session")
-def bootstrap_uv_env(tmp_path_factory):
-    """Env for the bootstrap script's `uv sync` / `uv run`.
-
-    Without this, `uv sync` re-syncs the project's own .venv -- usually the very
-    interpreter running pytest -- to the lockfile's default set, uninstalling
-    packages (mcp, mammoth, ...) mid-session so later tests silently skip.
-    UV_FROZEN keeps it from rewriting the tracked uv.lock as well.
-    """
-    env = os.environ.copy()
-    env["UV_PROJECT_ENVIRONMENT"] = str(tmp_path_factory.mktemp("bootstrap-uv-env") / ".venv")
-    env["UV_FROZEN"] = "1"
-    env.pop("VIRTUAL_ENV", None)
-    return env
 
 
 @pytest.fixture
