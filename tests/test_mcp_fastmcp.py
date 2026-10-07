@@ -330,37 +330,57 @@ class TestScrapingTools:
 
         assert isinstance(result, str)
 
+    # scrape_github shells out via run_subprocess_with_streaming (Popen), not
+    # subprocess.run; mock that seam so these tests never hit live GitHub.
+    _GITHUB_STREAMING = "skill_seekers.mcp.tools.scraping_tools.run_subprocess_with_streaming"
+
     async def test_scrape_github_basic(self):
         """Test basic GitHub scraping."""
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = Mock(returncode=0, stdout="GitHub scraping completed")
+        with patch(self._GITHUB_STREAMING) as mock_stream:
+            mock_stream.return_value = ("GitHub scraping completed", "", 0)
 
             result = await server_fastmcp.scrape_github(
                 repo="facebook/react", name="react-github-test"
             )
 
             assert isinstance(result, str)
+            assert "GitHub scraping completed" in result
+            cmd = mock_stream.call_args.args[0]
+            assert cmd[cmd.index("--repo") + 1] == "facebook/react"
+            assert cmd[cmd.index("--name") + 1] == "react-github-test"
 
     async def test_scrape_github_with_token(self):
         """Test GitHub scraping with authentication token."""
-        result = await server_fastmcp.scrape_github(
-            repo="private/repo", token="fake_token_for_testing", name="private-test"
-        )
+        with patch(self._GITHUB_STREAMING) as mock_stream:
+            mock_stream.return_value = ("", "", 0)
 
-        assert isinstance(result, str)
+            result = await server_fastmcp.scrape_github(
+                repo="private/repo", token="fake_token_for_testing", name="private-test"
+            )
+
+            assert isinstance(result, str)
+            cmd = mock_stream.call_args.args[0]
+            assert cmd[cmd.index("--token") + 1] == "fake_token_for_testing"
 
     async def test_scrape_github_options(self):
         """Test GitHub scraping with various options."""
-        result = await server_fastmcp.scrape_github(
-            repo="test/repo",
-            no_issues=True,
-            no_changelog=True,
-            no_releases=True,
-            max_issues=50,
-            scrape_only=True,
-        )
+        with patch(self._GITHUB_STREAMING) as mock_stream:
+            mock_stream.return_value = ("", "", 0)
 
-        assert isinstance(result, str)
+            result = await server_fastmcp.scrape_github(
+                repo="test/repo",
+                no_issues=True,
+                no_changelog=True,
+                no_releases=True,
+                max_issues=50,
+                scrape_only=True,
+            )
+
+            assert isinstance(result, str)
+            cmd = mock_stream.call_args.args[0]
+            for flag in ("--no-issues", "--no-changelog", "--no-releases", "--scrape-only"):
+                assert flag in cmd
+            assert cmd[cmd.index("--max-issues") + 1] == "50"
 
     async def test_scrape_pdf_basic(self, temp_dirs):
         """Test basic PDF scraping."""

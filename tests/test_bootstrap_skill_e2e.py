@@ -22,6 +22,7 @@ Run with venv tests:
     pytest tests/test_bootstrap_skill_e2e.py -v -m "venv"
 """
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -35,15 +36,36 @@ def project_root():
     return Path(__file__).parent.parent
 
 
+@pytest.fixture(scope="session")
+def bootstrap_uv_env(tmp_path_factory):
+    """Env for the bootstrap script's `uv sync` / `uv run`.
+
+    Without this, `uv sync` re-syncs the project's own .venv -- usually the very
+    interpreter running pytest -- to the lockfile's default set, uninstalling
+    packages (mcp, mammoth, ...) mid-session so later tests silently skip.
+    UV_FROZEN keeps it from rewriting the tracked uv.lock as well.
+    """
+    env = os.environ.copy()
+    env["UV_PROJECT_ENVIRONMENT"] = str(tmp_path_factory.mktemp("bootstrap-uv-env") / ".venv")
+    env["UV_FROZEN"] = "1"
+    env.pop("VIRTUAL_ENV", None)
+    return env
+
+
 @pytest.fixture
-def run_bootstrap(project_root):
+def run_bootstrap(project_root, bootstrap_uv_env):
     """Execute bootstrap script and return result"""
 
     def _run(timeout=600):
         script = project_root / "scripts" / "bootstrap_skill.sh"
 
         result = subprocess.run(
-            ["bash", str(script)], cwd=project_root, capture_output=True, text=True, timeout=timeout
+            ["bash", str(script)],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=bootstrap_uv_env,
         )
 
         return result

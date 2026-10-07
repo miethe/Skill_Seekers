@@ -5,8 +5,12 @@ Configures anyio to only use asyncio backend (not trio).
 Checks that the skill_seekers package is installed before running tests.
 """
 
+import atexit
 import os
+import shutil
+import stat
 import sys
+import tempfile
 
 import pytest
 
@@ -31,6 +35,37 @@ def _prefer_interpreter_scripts_on_path():
 
 
 _prefer_interpreter_scripts_on_path()
+
+
+def _stub_out_claude_cli():
+    """Shadow the real ``claude`` CLI with a stub that refuses to run.
+
+    The AI enhancers default to "auto" mode, which falls back to LOCAL mode
+    (``claude --dangerously-skip-permissions <prompt>``) whenever
+    ANTHROPIC_API_KEY is unset. On a developer machine with Claude Code
+    installed, unmocked tests (e.g. PatternRecognizer(depth="deep")) would then
+    launch real, permission-skipping model sessions -- slow, costly, and
+    non-hermetic. CI has no ``claude`` binary, so there the enhancers just
+    disable themselves; make every host behave the same way. Tests that mock
+    subprocess are unaffected. Set SKILL_SEEKERS_TEST_REAL_CLAUDE=1 to opt out.
+    """
+    if os.name == "nt" or os.environ.get("SKILL_SEEKERS_TEST_REAL_CLAUDE") == "1":
+        return
+    stub_dir = tempfile.mkdtemp(prefix="ss-test-claude-stub-")
+    atexit.register(shutil.rmtree, stub_dir, ignore_errors=True)
+    stub = os.path.join(stub_dir, "claude")
+    with open(stub, "w") as f:
+        f.write(
+            "#!/bin/sh\n"
+            'echo "claude CLI is stubbed out in the skill-seekers test suite '
+            '(SKILL_SEEKERS_TEST_REAL_CLAUDE=1 to allow)" >&2\n'
+            "exit 127\n"
+        )
+    os.chmod(stub, os.stat(stub).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    os.environ["PATH"] = os.pathsep.join([stub_dir, os.environ.get("PATH", "")])
+
+
+_stub_out_claude_cli()
 
 # Python 3.14+ argparse colorizes --help when FORCE_COLOR is inherited from the
 # launching terminal, which breaks the plain-text help assertions in the CLI
