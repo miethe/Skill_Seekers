@@ -36,14 +36,19 @@ def project_root():
 
 
 @pytest.fixture
-def run_bootstrap(project_root):
+def run_bootstrap(project_root, bootstrap_uv_env):
     """Execute bootstrap script and return result"""
 
     def _run(timeout=600):
         script = project_root / "scripts" / "bootstrap_skill.sh"
 
         result = subprocess.run(
-            ["bash", str(script)], cwd=project_root, capture_output=True, text=True, timeout=timeout
+            ["bash", str(script)],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=bootstrap_uv_env,
         )
 
         return result

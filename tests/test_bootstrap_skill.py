@@ -51,7 +51,7 @@ class TestBootstrapSkillScript:
         assert "description:" in content, "Header must have description"
 
     @pytest.mark.slow
-    def test_bootstrap_script_runs(self, project_root):
+    def test_bootstrap_script_runs(self, project_root, bootstrap_uv_env):
         """Test that bootstrap script runs successfully.
 
         Note: This test is slow as it runs full codebase analysis.
@@ -66,6 +66,7 @@ class TestBootstrapSkillScript:
             capture_output=True,
             text=True,
             timeout=600,  # 10 minute timeout
+            env=bootstrap_uv_env,
         )
 
         # Check script completed

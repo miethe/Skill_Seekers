@@ -52,8 +52,9 @@ class TestGitSourcesE2E:
         """Create a temporary git repository with sample configs."""
         repo_dir = tempfile.mkdtemp(prefix="ss_repo_")
 
-        # Initialize git repository
-        repo = git.Repo.init(repo_dir)
+        # Initialize git repository (pin 'master': tests assume it, and the
+        # host's init.defaultBranch may say otherwise, e.g. 'main')
+        repo = git.Repo.init(repo_dir, initial_branch="master")
 
         # Create sample config files
         configs = {
@@ -124,7 +125,7 @@ class TestGitSourcesE2E:
         repo_path = git_repo.clone_or_pull(
             source_name="test-direct",
             git_url=git_url,
-            branch="master",  # git.Repo.init creates 'master' by default
+            branch="master",  # fixture pins initial_branch="master"
         )
 
         assert repo_path.exists()
@@ -685,8 +686,9 @@ class TestMCPToolsE2E:
         """Create a temporary git repository with sample configs."""
         repo_dir = tempfile.mkdtemp(prefix="ss_mcp_repo_")
 
-        # Initialize git repository
-        repo = git.Repo.init(repo_dir)
+        # Initialize git repository (pin 'master': tests assume it, and the
+        # host's init.defaultBranch may say otherwise, e.g. 'main')
+        repo = git.Repo.init(repo_dir, initial_branch="master")
 
         # Create sample config
         config = {
